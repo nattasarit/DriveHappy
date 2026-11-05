@@ -25,7 +25,13 @@ router.get('/resolve', async (req, res) => {
     const data = await resolveStreams(id);
     res.json({ ok: true, data });
   } catch (err) {
-    res.status(502).json({ ok: false, error: err.message });
+    const errorKind = err.errorKind || 'unavailable';
+    res.status(502).json({
+      ok: false,
+      error: err.message,
+      errorKind,
+      loginRequiredHint: Boolean(err.loginRequiredHint),
+    });
   }
 });
 

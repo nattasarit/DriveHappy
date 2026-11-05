@@ -199,7 +199,7 @@
     showPlayerPage();
     nowTitle.textContent = data.title || data.videoId;
     if (!data.streamUrl) {
-      setStatus('ไม่พบสตรีมสำหรับคลิปนี้ — ลองคลิปอื่น หรือตั้ง YOUTUBE_API_KEY / Piped');
+      setStatus('ไม่พบสตรีมสำหรับคลิปนี้ — ลองคลิปอื่น (YOUTUBE_API_KEY ช่วยแค่ค้นหา ไม่ได้ปลดล็อกสตรีม)');
       return;
     }
 
@@ -242,6 +242,20 @@
     }
   }
 
+  function resolveErrorMessage(json, fallback) {
+    if (json?.error) return json.error;
+    if (json?.errorKind === 'bot_check') {
+      return 'YouTube ตรวจบอทจากเซิร์ฟเวอร์ — คลิปนี้ยังเล่นแบบไม่ล็อกอินไม่ได้ ลองคลิปอื่น';
+    }
+    if (json?.errorKind === 'login_required' || json?.loginRequiredHint) {
+      return 'คลิปนี้ต้องล็อกอิน / จำกัดอายุ — ใช้ปุ่มเข้าสู่ระบบหรือลองคลิปอื่น';
+    }
+    if (json?.errorKind === 'transient') {
+      return 'พร็อกซีสตรีมขัดข้องชั่วคราว — ลองใหม่หรือเลือกคลิปอื่น';
+    }
+    return fallback || 'โหลดสตรีมไม่สำเร็จ';
+  }
+
   async function openVideo(idOrUrl) {
     showPlayerPage();
     nowTitle.textContent = '';
@@ -250,7 +264,7 @@
     try {
       const res = await fetch(`/api/youtube/resolve?id=${encodeURIComponent(idOrUrl)}`);
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'resolve failed');
+      if (!json.ok) throw new Error(resolveErrorMessage(json, 'resolve failed'));
       await playResolved(json.data);
     } catch (err) {
       setStatus(err.message);
