@@ -49,9 +49,26 @@ const config = {
   // Optional browser cookies (VISITOR_INFO1_LIVE / SID / …) to ease YouTube bot checks from Hostinger.
   // Never commit real values — set only in hPanel or via admin paste. Helps stream resolve; not required for search.
   // Same-origin: the car browser CANNOT read youtube.com cookies for us — paste/export is required.
-  youtubeCookies: (process.env.YOUTUBE_COOKIES || '').trim(),
+  // Strip one layer of wrapping quotes (common hPanel mistake) — further sanitization in cookies.js.
+  youtubeCookies: (() => {
+    let s = (process.env.YOUTUBE_COOKIES || '').trim();
+    if (
+      (s.startsWith('"') && s.endsWith('"') && s.length >= 2) ||
+      (s.startsWith("'") && s.endsWith("'") && s.length >= 2)
+    ) {
+      s = s.slice(1, -1).trim();
+    }
+    return s.replace(/^Cookie:\s*/i, '');
+  })(),
   // Shared secret for POST /api/youtube/cookies (paste-once admin). Empty = paste API disabled.
   youtubeCookieAdminToken: (process.env.YOUTUBE_COOKIE_ADMIN_TOKEN || '').trim(),
+  // Optional HTTP(S) proxy for YouTube Innertube only (residential recommended).
+  // Hostinger datacenter IPs often get LOGIN_REQUIRED even with complete cookies.
+  youtubeFetchProxy: (
+    process.env.YOUTUBE_FETCH_PROXY ||
+    process.env.YOUTUBE_HTTPS_PROXY ||
+    ''
+  ).trim(),
   pipedApiBases: (process.env.PIPED_API_BASES ||
     [
       'https://api.piped.private.coffee',
