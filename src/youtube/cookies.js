@@ -1,23 +1,37 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
 
 /**
- * YouTube cookie handling for DriveHappy (DRI-8).
+ * YouTube cookie handling for DriveHappy.
  *
- * Honest constraint: the Tesla / phone browser on hd.bkksoftkit.com CANNOT read
- * cookies belonging to youtube.com (same-origin policy). We never claim otherwise.
- *
- * Practical MVP: operator pastes exported cookies once (Hostinger env YOUTUBE_COOKIES
- * or authenticated admin paste). Server stores them and sends Cookie on Innertube.
+ * Same-origin: hd.bkksoftkit.com cannot read youtube.com cookies from the browser.
+ * Pasted cookies must be sent on Innertube as Cookie + (for WEB) SAPISIDHASH.
  */
 
 const STORE_DIR = path.join(__dirname, '..', '..', '.tokens');
 const STORE_FILE = path.join(STORE_DIR, 'youtube-cookies.txt');
 
+const YOUTUBE_ORIGIN = 'https://www.youtube.com';
+
+/** Names that matter for a logged-in WEB Innertube session. */
+const REQUIRED_ANY_SESSION = ['SID', '__Secure-3PSID'];
+const REQUIRED_ANY_SAPISID = ['SAPISID', '__Secure-3PAPISID'];
+const RECOMMENDED = [
+  'HSID',
+  'SSID',
+  'APISID',
+  '__Secure-3PAPISID',
+  'LOGIN_INFO',
+  'VISITOR_INFO1_LIVE',
+  'PREF',
+];
+
 let runtimeHeader = null;
+let runtimeNames = [];
 let runtimeMeta = { source: null, updatedAt: null, nameCount: 0 };
 
 function ensureStoreDir() {
@@ -35,47 +49,69 @@ function ensureStoreDir() {
  */
 function normalizeCookieInput(raw) {
   const text = String(raw || '').trim();
-  if (!text) return { header: '', names: [] };
+  if (!text) return { header: '', names: [], map: new Map() };
 
-  // Netscape cookie file
-  if (/^\s*#(?: Netscape| HttpOnly)/im.test(text) || /\tyoutube\.com\t/i.test(text)) {
-    const map = new Map();
+  const map = new Map();
+
+  const looksNetscape =
+    /^\s*#(?: Netscape| HttpOnly)/im.test(text) ||
+    /\t(?:TRUE|FALSE)\t\/\t(?:TRUE|FALSE)\t\d+\t/i.test(text) ||
+    /\tyoutube\.com\t/i.test(text) ||
+    /\.youtube\.com\t/i.test(text);
+
+  if (looksNetscape) {
     for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) {
-        // #HttpOnly_.youtube.com ... still a data line in some exporters
-        if (!trimmed.startsWith('#HttpOnly_')) continue;
-      }
-      const normalized = trimmed.replace(/^#HttpOnly_/, '');
-      const parts = normalized.split('\t');
+      let trimmed = line.trim();
+      if (!trimmed) continue;
+      const httpOnly = trimmed.startsWith('#HttpOnly_');
+      if (trimmed.startsWith('#') && !httpOnly) continue;
+      if (httpOnly) trimmed = trimmed.replace(/^#HttpOnly_/, '');
+      const parts = trimmed.split('\t');
       if (parts.length < 7) continue;
       const domain = parts[0];
       const name = parts[5];
-      const value = parts[6];
+      const value = parts.slice(6).join('\t'); // values can contain tabs rarely
       if (!/youtube\.com|google\.com/i.test(domain)) continue;
-      if (!name || value == null) continue;
+      if (!name || value == null || value === '') continue;
       map.set(name, value);
     }
-    const names = [...map.keys()];
-    const header = names.map((n) => `${n}=${map.get(n)}`).join('; ');
-    return { header, names };
+  } else {
+    for (const part of text.split(';')) {
+      const piece = part.trim();
+      if (!piece) continue;
+      const eq = piece.indexOf('=');
+      if (eq <= 0) continue;
+      const name = piece.slice(0, eq).trim();
+      const value = piece.slice(eq + 1).trim();
+      if (!name) continue;
+      map.set(name, value);
+    }
   }
 
-  // Already a Cookie header (or semicolon-separated pairs)
-  const map = new Map();
-  for (const part of text.split(';')) {
-    const piece = part.trim();
-    if (!piece) continue;
-    const eq = piece.indexOf('=');
-    if (eq <= 0) continue;
-    const name = piece.slice(0, eq).trim();
-    const value = piece.slice(eq + 1).trim();
-    if (!name) continue;
-    map.set(name, value);
-  }
   const names = [...map.keys()];
   const header = names.map((n) => `${n}=${map.get(n)}`).join('; ');
-  return { header, names };
+  return { header, names, map };
+}
+
+function analyzeCookieNames(names) {
+  const set = new Set(names || []);
+  const hasSession = REQUIRED_ANY_SESSION.some((n) => set.has(n));
+  const hasSapisid = REQUIRED_ANY_SAPISID.some((n) => set.has(n));
+  const missingRequired = [];
+  if (!hasSession) missingRequired.push('SID หรือ __Secure-3PSID');
+  if (!hasSapisid) missingRequired.push('SAPISID หรือ __Secure-3PAPISID');
+  const missingRecommended = RECOMMENDED.filter((n) => !set.has(n));
+  return {
+    hasSession,
+    hasSapisid,
+    complete: hasSession && hasSapisid,
+    missingRequired,
+    missingRecommended,
+    presentRequired: [
+      ...REQUIRED_ANY_SESSION.filter((n) => set.has(n)),
+      ...REQUIRED_ANY_SAPISID.filter((n) => set.has(n)),
+    ],
+  };
 }
 
 function loadRuntimeFromDisk() {
@@ -85,6 +121,7 @@ function loadRuntimeFromDisk() {
     const { header, names } = normalizeCookieInput(raw);
     if (!header) return;
     runtimeHeader = header;
+    runtimeNames = names;
     runtimeMeta = {
       source: 'file',
       updatedAt: fs.statSync(STORE_FILE).mtime.toISOString(),
@@ -102,7 +139,7 @@ function getYoutubeCookieHeader() {
   if (config.youtubeCookies) {
     const { header, names } = normalizeCookieInput(config.youtubeCookies);
     if (header) {
-      // Env is source of truth until admin paste overrides
+      runtimeNames = names;
       runtimeMeta = {
         source: runtimeMeta.source || 'env',
         updatedAt: runtimeMeta.updatedAt,
@@ -114,15 +151,52 @@ function getYoutubeCookieHeader() {
   return '';
 }
 
+function getCookieMap() {
+  const header = getYoutubeCookieHeader();
+  if (!header) return new Map();
+  return normalizeCookieInput(header).map;
+}
+
+/**
+ * YouTube WEB client requires Authorization: SAPISIDHASH <ts>_<sha1>.
+ * Prefer __Secure-3PAPISID when present (newer accounts), else SAPISID.
+ */
+function buildSapisidHashAuthorization(cookieMap, origin = YOUTUBE_ORIGIN) {
+  const sapisid = cookieMap.get('__Secure-3PAPISID') || cookieMap.get('SAPISID');
+  if (!sapisid) return null;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const input = `${timestamp} ${sapisid} ${origin}`;
+  const hash = crypto.createHash('sha1').update(input).digest('hex');
+  return `SAPISIDHASH ${timestamp}_${hash}`;
+}
+
 function cookiesStatus() {
   const header = getYoutubeCookieHeader();
   const configured = Boolean(header);
+  const names = configured ? runtimeNames.length ? runtimeNames : normalizeCookieInput(header).names : [];
+  const analysis = analyzeCookieNames(names);
   return {
     cookiesConfigured: configured,
     source: configured ? runtimeMeta.source || (config.youtubeCookies ? 'env' : null) : null,
     updatedAt: runtimeMeta.updatedAt,
-    nameCount: configured ? runtimeMeta.nameCount || null : 0,
+    nameCount: configured ? names.length : 0,
     adminPasteEnabled: Boolean(config.youtubeCookieAdminToken),
+    cookieCompleteness: configured
+      ? {
+          complete: analysis.complete,
+          hasSessionCookie: analysis.hasSession,
+          hasSapisid: analysis.hasSapisid,
+          missingRequired: analysis.missingRequired,
+          missingRecommended: analysis.missingRecommended,
+          // names only — never values
+          presentRequiredNames: analysis.presentRequired,
+        }
+      : null,
+    requiredCookieNames: {
+      sessionAnyOf: REQUIRED_ANY_SESSION,
+      sapisidAnyOf: REQUIRED_ANY_SAPISID,
+      recommended: RECOMMENDED,
+    },
     crossOriginNote:
       'เบราว์เซอร์บน hd.bkksoftkit.com อ่านคุกกี้ของ youtube.com ไม่ได้ (same-origin) — ต้องวางคุกกี้ที่ export มา หรือใส่ YOUTUBE_COOKIES ใน Hostinger',
   };
@@ -135,20 +209,28 @@ function saveYoutubeCookies(raw, { source = 'admin' } = {}) {
     err.code = 'INVALID_COOKIES';
     throw err;
   }
-  // Prefer session-ish names present for a useful paste (soft check)
-  const useful = ['SID', '__Secure-3PSID', 'SAPISID', '__Secure-3PAPISID', 'HSID', 'SSID', 'LOGIN_INFO'];
-  const hit = useful.filter((n) => names.includes(n));
-  if (hit.length === 0) {
+
+  const analysis = analyzeCookieNames(names);
+  if (!analysis.complete) {
     const err = new Error(
-      'ไม่พบคุกกี้ YouTube/Google ที่จำเป็น (เช่น SID / __Secure-3PSID) — export ใหม่จากเบราว์เซอร์ที่ล็อกอิน YouTube แล้ว'
+      'คุกกี้ไม่ครบสำหรับปลดล็อกบอท — ต้องมี (' +
+        REQUIRED_ANY_SESSION.join(' หรือ ') +
+        ') และ (' +
+        REQUIRED_ANY_SAPISID.join(' หรือ ') +
+        '). ตอนนี้ขาด: ' +
+        analysis.missingRequired.join(', ') +
+        '. Export ใหม่จาก Chrome ที่ล็อกอิน youtube.com แล้ว (Application → Cookies) หรือใช้ส่วนขยาย cookies.txt'
     );
     err.code = 'WEAK_COOKIES';
+    err.missingRequired = analysis.missingRequired;
+    err.missingRecommended = analysis.missingRecommended;
     throw err;
   }
 
   ensureStoreDir();
   fs.writeFileSync(STORE_FILE, header, { mode: 0o600 });
   runtimeHeader = header;
+  runtimeNames = names;
   runtimeMeta = {
     source,
     updatedAt: new Date().toISOString(),
@@ -159,6 +241,7 @@ function saveYoutubeCookies(raw, { source = 'admin' } = {}) {
 
 function clearYoutubeCookies() {
   runtimeHeader = null;
+  runtimeNames = [];
   runtimeMeta = { source: null, updatedAt: null, nameCount: 0 };
   try {
     if (fs.existsSync(STORE_FILE)) fs.unlinkSync(STORE_FILE);
@@ -184,10 +267,17 @@ function assertAdminToken(provided) {
 
 module.exports = {
   normalizeCookieInput,
+  analyzeCookieNames,
   getYoutubeCookieHeader,
+  getCookieMap,
+  buildSapisidHashAuthorization,
   cookiesStatus,
   saveYoutubeCookies,
   clearYoutubeCookies,
   assertAdminToken,
+  YOUTUBE_ORIGIN,
+  REQUIRED_ANY_SESSION,
+  REQUIRED_ANY_SAPISID,
+  RECOMMENDED,
   STORE_FILE,
 };

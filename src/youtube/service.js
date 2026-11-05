@@ -2,7 +2,13 @@
 
 const { config } = require('../config');
 const { cache } = require('../cache');
-const { getYoutubeCookieHeader, cookiesStatus } = require('./cookies');
+const {
+  getYoutubeCookieHeader,
+  getCookieMap,
+  buildSapisidHashAuthorization,
+  cookiesStatus,
+  YOUTUBE_ORIGIN,
+} = require('./cookies');
 
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -60,8 +66,8 @@ function thaiErrorMessage(kind) {
   switch (kind) {
     case 'bot_check':
       return (
-        'YouTube บล็อกการดึงสตรีมจากเซิร์ฟเวอร์ (ตรวจบอท) — เบราว์เซอร์รถอ่านคุกกี้ youtube.com ให้เซิร์ฟเวอร์ไม่ได้ ' +
-        'ลองคลิปอื่น หรือให้ผู้ดูแลวางคุกกี้ที่ export แล้วที่ /youtube-cookies-admin.html / ใส่ YOUTUBE_COOKIES'
+        'YouTube ยังตรวจบอทอยู่ — คุกกี้ที่วางอาจไม่ครบ (ต้องมี SAPISID หรือ __Secure-3PAPISID ด้วย ไม่ใช่แค่ SID) ' +
+        'หรือหมดอายุแล้ว ให้ export ใหม่จาก Chrome ที่ล็อกอิน youtube.com แล้ววางที่ /youtube-cookies-admin.html'
       );
     case 'login_required':
       return (
@@ -299,16 +305,28 @@ function pickBestStream(streams) {
   return ranked[0]?.s || null;
 }
 
-function innertubeHeaders(client) {
+function innertubeHeaders(spec) {
   const headers = {
     'Content-Type': 'application/json',
-    'User-Agent': client.ua,
+    'User-Agent': spec.ua,
     Accept: 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9,th;q=0.8',
   };
   const cookie = getYoutubeCookieHeader();
   if (cookie) headers.Cookie = cookie;
-  if (client.visitorData) {
-    headers['X-Goog-Visitor-Id'] = client.visitorData;
+  if (spec.visitorData) {
+    headers['X-Goog-Visitor-Id'] = spec.visitorData;
+  }
+
+  // Browser cookies only authenticate the WEB / MWEB Innertube clients when paired with SAPISIDHASH.
+  if (spec.useSapisidHash && cookie) {
+    const auth = buildSapisidHashAuthorization(getCookieMap(), YOUTUBE_ORIGIN);
+    if (auth) {
+      headers.Authorization = auth;
+      headers['X-Origin'] = YOUTUBE_ORIGIN;
+      headers.Origin = YOUTUBE_ORIGIN;
+      headers.Referer = `${YOUTUBE_ORIGIN}/`;
+    }
   }
   return headers;
 }
@@ -316,26 +334,38 @@ function innertubeHeaders(client) {
 async function fetchVisitorData() {
   try {
     const cookie = getYoutubeCookieHeader();
+    const useWeb = Boolean(cookie);
+    const ua = useWeb
+      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      : 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip';
+    const client = useWeb
+      ? { clientName: 'WEB', clientVersion: '2.20250313.00.00', hl: 'en', gl: 'US' }
+      : {
+          clientName: 'ANDROID_VR',
+          clientVersion: '1.61.48',
+          hl: 'en',
+          gl: 'US',
+        };
+    const headers = {
+      'Content-Type': 'application/json',
+      'User-Agent': ua,
+      ...(cookie ? { Cookie: cookie } : {}),
+    };
+    if (useWeb) {
+      const auth = buildSapisidHashAuthorization(getCookieMap(), YOUTUBE_ORIGIN);
+      if (auth) {
+        headers.Authorization = auth;
+        headers['X-Origin'] = YOUTUBE_ORIGIN;
+        headers.Origin = YOUTUBE_ORIGIN;
+        headers.Referer = `${YOUTUBE_ORIGIN}/`;
+      }
+    }
     const { json } = await fetchJson(
       'https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false',
       {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent':
-            'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-          ...(cookie ? { Cookie: cookie } : {}),
-        },
-        body: JSON.stringify({
-          context: {
-            client: {
-              clientName: 'ANDROID_VR',
-              clientVersion: '1.61.48',
-              hl: 'en',
-              gl: 'US',
-            },
-          },
-        }),
+        headers,
+        body: JSON.stringify({ context: { client } }),
       },
       8000
     );
@@ -346,7 +376,32 @@ async function fetchVisitorData() {
 }
 
 function buildInnertubeClients() {
-  const clients = [
+  const cookie = getYoutubeCookieHeader();
+  const cookieMap = cookie ? getCookieMap() : new Map();
+  const hasSapisid = cookieMap.has('SAPISID') || cookieMap.has('__Secure-3PAPISID');
+
+  const webClients = [
+    {
+      name: 'WEB+cookies',
+      useSapisidHash: true,
+      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      client: {
+        clientName: 'WEB',
+        clientVersion: '2.20250313.00.00',
+      },
+    },
+    {
+      name: 'MWEB+cookies',
+      useSapisidHash: true,
+      ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+      client: {
+        clientName: 'MWEB',
+        clientVersion: '2.20250313.00.00',
+      },
+    },
+  ];
+
+  const anonClients = [
     {
       name: 'ANDROID_VR',
       ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
@@ -395,10 +450,9 @@ function buildInnertubeClients() {
       },
     },
   ];
-  // Prefer the Hostinger YOUTUBE_API_KEY on Innertube player attempts when present.
-  // (Data API keys are for googleapis search/metadata; if Google accepts it on youtubei, great — otherwise ignored.)
+
   if (config.youtubeApiKey) {
-    clients.unshift({
+    anonClients.unshift({
       name: 'ANDROID_VR+GAPI',
       ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
       key: config.youtubeApiKey,
@@ -412,7 +466,12 @@ function buildInnertubeClients() {
       },
     });
   }
-  return clients;
+
+  // Browser cookie jars authenticate WEB/MWEB (+ SAPISIDHASH), not ANDROID_VR.
+  if (cookie && hasSapisid) {
+    return [...webClients, ...anonClients];
+  }
+  return anonClients;
 }
 
 async function resolveViaInnertube(id, visitorData) {
@@ -434,7 +493,11 @@ async function resolveViaInnertube(id, visitorData) {
         : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
       const { res, json } = await fetchJson(url, {
         method: 'POST',
-        headers: innertubeHeaders({ ua: spec.ua, visitorData }),
+        headers: innertubeHeaders({
+          ua: spec.ua,
+          visitorData,
+          useSapisidHash: Boolean(spec.useSapisidHash),
+        }),
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`Innertube HTTP ${res.status}`);
@@ -765,10 +828,12 @@ function youtubeIntegrationStatus() {
     cookiesUpdatedAt: cookieInfo.updatedAt,
     cookiesNameCount: cookieInfo.nameCount,
     adminPasteEnabled: cookieInfo.adminPasteEnabled,
+    cookieCompleteness: cookieInfo.cookieCompleteness,
+    requiredCookieNames: cookieInfo.requiredCookieNames,
     pipedBases: config.pipedApiBases.length,
     invidiousBases: config.invidiousApiBases.length,
     note:
-      'YOUTUBE_API_KEY = search/metadata. Streams = Innertube/Piped/Invidious. Cookies must be pasted/exported — hd.bkksoftkit.com cannot read youtube.com cookies cross-origin.',
+      'YOUTUBE_API_KEY = search/metadata. Streams = Innertube (WEB+Cookie+SAPISIDHASH when complete jar) then Piped/Invidious. Thin SID-only jars are rejected. Piped/Invidious ignore server cookies.',
     crossOriginNote: cookieInfo.crossOriginNote,
   };
 }
