@@ -2,6 +2,7 @@
 
 const { config } = require('../config');
 const { cache } = require('../cache');
+const { getYoutubeCookieHeader, cookiesStatus } = require('./cookies');
 
 const FETCH_TIMEOUT_MS = 12_000;
 
@@ -59,13 +60,13 @@ function thaiErrorMessage(kind) {
   switch (kind) {
     case 'bot_check':
       return (
-        'YouTube บล็อกการดึงสตรีมจากเซิร์ฟเวอร์ (ตรวจบอท) — ยังเล่นแบบไม่ล็อกอินในรถไม่ได้สำหรับคลิปนี้ ' +
-        'ลองคลิปอื่นก่อน หรือให้ผู้ดูแลใส่ YOUTUBE_COOKIES ใน Hostinger สำหรับคลิปที่ติดบ่อย'
+        'YouTube บล็อกการดึงสตรีมจากเซิร์ฟเวอร์ (ตรวจบอท) — เบราว์เซอร์รถอ่านคุกกี้ youtube.com ให้เซิร์ฟเวอร์ไม่ได้ ' +
+        'ลองคลิปอื่น หรือให้ผู้ดูแลวางคุกกี้ที่ export แล้วที่ /youtube-cookies-admin.html / ใส่ YOUTUBE_COOKIES'
       );
     case 'login_required':
       return (
-        'คลิปนี้ต้องล็อกอิน / จำกัดอายุบน YouTube — ใช้ปุ่มเข้าสู่ระบบบนโทรศัพท์/คอม แล้วลองใหม่ ' +
-        'หรือเลือกคลิปอื่นที่เล่นได้โดยไม่ล็อกอิน'
+        'คลิปนี้ต้องล็อกอิน / จำกัดอายุบน YouTube — ล็อกอินบนโทรศัพท์/คอมแล้ว export คุกกี้ให้เซิร์ฟเวอร์ ' +
+        '(ไม่สามารถดึงคุกกี้จากแท็บ YouTube อัตโนมัติได้) หรือเลือกคลิปอื่น'
       );
     case 'transient':
       return 'พร็อกซีสตรีมขัดข้องชั่วคราว (Piped/Invidious) — ลองคลิปอื่นหรือรอสักครู่แล้วลองใหม่';
@@ -304,9 +305,8 @@ function innertubeHeaders(client) {
     'User-Agent': client.ua,
     Accept: 'application/json',
   };
-  if (config.youtubeCookies) {
-    headers.Cookie = config.youtubeCookies;
-  }
+  const cookie = getYoutubeCookieHeader();
+  if (cookie) headers.Cookie = cookie;
   if (client.visitorData) {
     headers['X-Goog-Visitor-Id'] = client.visitorData;
   }
@@ -315,6 +315,7 @@ function innertubeHeaders(client) {
 
 async function fetchVisitorData() {
   try {
+    const cookie = getYoutubeCookieHeader();
     const { json } = await fetchJson(
       'https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false',
       {
@@ -323,7 +324,7 @@ async function fetchVisitorData() {
           'Content-Type': 'application/json',
           'User-Agent':
             'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-          ...(config.youtubeCookies ? { Cookie: config.youtubeCookies } : {}),
+          ...(cookie ? { Cookie: cookie } : {}),
         },
         body: JSON.stringify({
           context: {
@@ -756,13 +757,19 @@ async function resolveStreams(videoId) {
 }
 
 function youtubeIntegrationStatus() {
+  const cookieInfo = cookiesStatus();
   return {
     dataApiConfigured: Boolean(config.youtubeApiKey),
-    cookiesConfigured: Boolean(config.youtubeCookies),
+    cookiesConfigured: cookieInfo.cookiesConfigured,
+    cookiesSource: cookieInfo.source,
+    cookiesUpdatedAt: cookieInfo.updatedAt,
+    cookiesNameCount: cookieInfo.nameCount,
+    adminPasteEnabled: cookieInfo.adminPasteEnabled,
     pipedBases: config.pipedApiBases.length,
     invidiousBases: config.invidiousApiBases.length,
     note:
-      'YOUTUBE_API_KEY improves search/metadata only; playable streams use Innertube/Piped/Invidious (optional YOUTUBE_COOKIES for bot-checks).',
+      'YOUTUBE_API_KEY = search/metadata. Streams = Innertube/Piped/Invidious. Cookies must be pasted/exported — hd.bkksoftkit.com cannot read youtube.com cookies cross-origin.',
+    crossOriginNote: cookieInfo.crossOriginNote,
   };
 }
 

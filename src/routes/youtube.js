@@ -7,11 +7,58 @@ const {
   extractVideoId,
   youtubeIntegrationStatus,
 } = require('../youtube/service');
+const {
+  assertAdminToken,
+  saveYoutubeCookies,
+  clearYoutubeCookies,
+  cookiesStatus,
+  getYoutubeCookieHeader,
+} = require('../youtube/cookies');
 
 const router = express.Router();
 
 router.get('/status', (_req, res) => {
   res.json({ ok: true, data: youtubeIntegrationStatus() });
+});
+
+/**
+ * Paste-once YouTube cookies (Netscape or Cookie header).
+ * Auth: header X-DriveHappy-Admin-Token or body.token == YOUTUBE_COOKIE_ADMIN_TOKEN
+ * Cannot read youtube.com cookies from the car browser — operator must export/paste.
+ */
+router.post('/cookies', (req, res) => {
+  try {
+    const token = req.get('x-drivehappy-admin-token') || req.body?.token || '';
+    assertAdminToken(token);
+    const raw = req.body?.cookies || req.body?.cookie || '';
+    const data = saveYoutubeCookies(raw, { source: 'admin' });
+    res.json({
+      ok: true,
+      data,
+      message: 'บันทึกคุกกี้แล้ว — ลองเล่นคลิปที่เคย LOGIN_REQUIRED อีกครั้ง (อย่าแชร์โทเคนแอดมิน)',
+    });
+  } catch (err) {
+    const status =
+      err.code === 'UNAUTHORIZED' ? 401 : err.code === 'ADMIN_DISABLED' ? 503 : 400;
+    res.status(status).json({ ok: false, error: err.message, code: err.code || null });
+  }
+});
+
+router.delete('/cookies', (req, res) => {
+  try {
+    const token = req.get('x-drivehappy-admin-token') || req.body?.token || req.query?.token || '';
+    assertAdminToken(token);
+    const data = clearYoutubeCookies();
+    res.json({ ok: true, data, message: 'ลบคุกกี้ที่วางไว้แล้ว (ค่า YOUTUBE_COOKIES ใน env ยังใช้ได้ถ้ามี)' });
+  } catch (err) {
+    const status =
+      err.code === 'UNAUTHORIZED' ? 401 : err.code === 'ADMIN_DISABLED' ? 503 : 400;
+    res.status(status).json({ ok: false, error: err.message, code: err.code || null });
+  }
+});
+
+router.get('/cookies/status', (_req, res) => {
+  res.json({ ok: true, data: cookiesStatus() });
 });
 
 router.get('/search', async (req, res) => {
@@ -74,12 +121,15 @@ router.get('/media', async (req, res) => {
     const rangeOk = !pipedProxy && /googlevideo\.com|ytimg\.com|ggpht\.com/.test(host);
     const forwardRange = rangeOk && req.headers.range ? req.headers.range : null;
 
+    const cookie = getYoutubeCookieHeader();
     const upstream = await fetch(target, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36 DriveHappy/1.0',
         Accept: '*/*',
         ...(forwardRange ? { Range: forwardRange } : {}),
+        // googlevideo usually uses signed URLs; cookies help some edge cases when pasted.
+        ...(cookie && /googlevideo\.com|youtube\.com/i.test(host) ? { Cookie: cookie } : {}),
       },
       redirect: 'follow',
     });

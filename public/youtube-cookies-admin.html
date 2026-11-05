@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>DriveHappy · วางคุกกี้ YouTube</title>
+  <link rel="stylesheet" href="/css/app.css" />
+  <style>
+    .admin-wrap {
+      position: relative;
+      z-index: 1;
+      width: min(720px, 100%);
+      margin: 0 auto;
+      padding: clamp(1.25rem, 3vw, 2.5rem);
+    }
+    .admin-wrap h1 {
+      font-family: var(--font-display);
+      font-size: clamp(1.6rem, 4vw, 2.2rem);
+      margin: 0 0 0.5rem;
+    }
+    .admin-wrap textarea {
+      width: 100%;
+      min-height: 180px;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(18, 26, 36, 0.85);
+      color: var(--ink);
+      padding: 0.85rem 1rem;
+      font: 500 0.95rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      resize: vertical;
+    }
+    .admin-wrap input[type="password"] {
+      width: 100%;
+      min-height: var(--touch);
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(18, 26, 36, 0.85);
+      color: var(--ink);
+      padding: 0 1rem;
+      font: 500 1rem/1.2 var(--font-body);
+      margin-bottom: 0.75rem;
+    }
+    .admin-wrap label {
+      display: block;
+      margin: 1rem 0 0.4rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+    .admin-status {
+      margin-top: 1rem;
+      padding: 0.85rem 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .warn {
+      color: var(--accent);
+      margin: 0.75rem 0 1rem;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <main class="admin-wrap">
+    <p class="brand" style="font-size:1.4rem;margin:0">DriveHappy</p>
+    <h1>วางคุกกี้ YouTube (แอดมิน)</h1>
+    <p class="warn">
+      เบราว์เซอร์บนโดเมนนี้ <strong>อ่านคุกกี้ของ youtube.com ไม่ได้</strong> (กฎ same-origin)
+      — ต้องล็อกอิน YouTube บนโทรศัพท์/คอม แล้ว export คุกกี้มาวางที่นี่ หรือใส่ <code>YOUTUBE_COOKIES</code> ใน Hostinger
+    </p>
+    <p class="yt-note">
+      ทำบนมือถือ/โน้ตบุ๊กตอนจอดรถ ไม่แนะนำตอนขับรถ · อย่า commit คุกกี้ลง git · ตั้ง
+      <code>YOUTUBE_COOKIE_ADMIN_TOKEN</code> ใน hPanel ก่อน
+    </p>
+
+    <label for="token">โทเคนแอดมิน</label>
+    <input id="token" type="password" autocomplete="off" placeholder="YOUTUBE_COOKIE_ADMIN_TOKEN" />
+
+    <label for="cookies">คุกกี้ (Cookie header หรือ Netscape cookies.txt)</label>
+    <textarea id="cookies" placeholder="SID=...; HSID=...; __Secure-3PSID=...&#10;หรือวางเนื้อหาไฟล์ cookies.txt"></textarea>
+
+    <div class="yt-login-actions" style="margin-top:1rem">
+      <button type="button" class="btn btn-primary" id="btn-save">บันทึกคุกกี้</button>
+      <button type="button" class="btn btn-ghost" id="btn-clear">ลบคุกกี้ที่วางไว้</button>
+      <button type="button" class="btn btn-ghost" id="btn-status">รีเฟรชสถานะ</button>
+      <a class="btn btn-ghost" href="/">← แดชบอร์ด</a>
+    </div>
+
+    <p class="admin-status" id="status" aria-live="polite">กำลังโหลดสถานะ…</p>
+  </main>
+  <script>
+    const statusEl = document.getElementById('status');
+    async function refreshStatus() {
+      try {
+        const res = await fetch('/api/youtube/cookies/status');
+        const json = await res.json();
+        const d = json.data || {};
+        statusEl.textContent =
+          'cookiesConfigured=' + d.cookiesConfigured +
+          '\nsource=' + (d.source || '-') +
+          '\nupdatedAt=' + (d.updatedAt || '-') +
+          '\nnameCount=' + (d.nameCount ?? '-') +
+          '\nadminPasteEnabled=' + d.adminPasteEnabled +
+          '\n\n' + (d.crossOriginNote || '');
+      } catch (err) {
+        statusEl.textContent = 'โหลดสถานะไม่สำเร็จ: ' + err.message;
+      }
+    }
+    document.getElementById('btn-status').addEventListener('click', refreshStatus);
+    document.getElementById('btn-save').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      const cookies = document.getElementById('cookies').value;
+      statusEl.textContent = 'กำลังบันทึก…';
+      try {
+        const res = await fetch('/api/youtube/cookies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-DriveHappy-Admin-Token': token,
+          },
+          body: JSON.stringify({ token, cookies }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || 'save failed');
+        statusEl.textContent = (json.message || 'บันทึกแล้ว') + '\n' + JSON.stringify(json.data, null, 2);
+        document.getElementById('cookies').value = '';
+      } catch (err) {
+        statusEl.textContent = 'บันทึกไม่สำเร็จ: ' + err.message;
+      }
+    });
+    document.getElementById('btn-clear').addEventListener('click', async () => {
+      const token = document.getElementById('token').value.trim();
+      statusEl.textContent = 'กำลังลบ…';
+      try {
+        const res = await fetch('/api/youtube/cookies?token=' + encodeURIComponent(token), {
+          method: 'DELETE',
+          headers: { 'X-DriveHappy-Admin-Token': token },
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error || 'clear failed');
+        statusEl.textContent = (json.message || 'ลบแล้ว') + '\n' + JSON.stringify(json.data, null, 2);
+      } catch (err) {
+        statusEl.textContent = 'ลบไม่สำเร็จ: ' + err.message;
+      }
+    });
+    refreshStatus();
+  </script>
+</body>
+</html>

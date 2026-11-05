@@ -51,7 +51,8 @@ npm start
 | `TESLA_VIN` | Default already `LRWYHCFJ7SC322078` |
 | `TESLA_REDIRECT_URI` | `https://hd.bkksoftkit.com/api/tesla/callback` (must match Tesla app) |
 | `YOUTUBE_API_KEY` | Optional; improves **search** only |
-| `YOUTUBE_COOKIES` | Optional; browser cookies to ease stream bot-checks (hPanel only) |
+| `YOUTUBE_COOKIES` | Optional; exported YouTube cookies for Innertube (hPanel) |
+| `YOUTUBE_COOKIE_ADMIN_TOKEN` | Optional; enables paste UI at `/youtube-cookies-admin.html` |
 | `PIPED_API_BASES` / `INVIDIOUS_API_BASES` | Optional proxy lists |
 
 Optional: `NEWS_FEED_URL`, gold URL, cache TTLs, `TESLA_SOFT_LIMIT_CALLS`.
@@ -88,8 +89,8 @@ Refresh tokens are single-use — when the server refreshes, it keeps the new to
 - Server `/api/youtube/resolve` tries **Innertube (ANDROID_VR / Android / iOS) → Piped (batched) → Invidious**, prefers progressive muxed MP4 (≈360p–720p), demotes LBRY/HLS, and probes the URL before returning. `/api/youtube/media` same-origin proxies bytes (and avoids broken Piped `Content-Range` probes).
 - Play / pause on the player; **ปิดคลิป** / Back stop decode and return to results.
 - **`YOUTUBE_API_KEY`** (Hostinger env): preferred for **search + video metadata**. It does **not** officially unlock stream URLs; playback still uses Innertube → Piped → Invidious (the key is also tried on Innertube player requests when set).
-- Many clips hit YouTube’s datacenter **bot check** (“Sign in to confirm you’re not a bot”). Optional Hostinger env **`YOUTUBE_COOKIES`** (personal browser cookies) can help resolve those; otherwise try another clip. True age-gate / login-only clips still need Google login outside the car when possible.
-- After setting/changing YouTube env vars in hPanel, **redeploy / restart** the Node app so the process picks them up. Check `GET /api/youtube/status` or `/api/health` → `youtube.dataApiConfigured` (boolean only; never returns the key).
+- **Cookies / LOGIN_REQUIRED (DRI-8):** the car browser on `hd.bkksoftkit.com` **cannot** read `youtube.com` cookies (same-origin). Options: (a) set **`YOUTUBE_COOKIES`** in hPanel, or (b) open **`/youtube-cookies-admin.html`**, enter **`YOUTUBE_COOKIE_ADMIN_TOKEN`**, paste Cookie header / Netscape export once (stored under `.tokens/`, not git). Silent “reuse the YouTube tab’s login” is impossible cross-origin.
+- After setting/changing YouTube env vars in hPanel, **redeploy / restart** the Node app so the process picks them up. Check `GET /api/youtube/status` → `dataApiConfigured` / `cookiesConfigured` (booleans only; never returns secrets).
 
 ### Verify on the car
 
@@ -114,6 +115,7 @@ Refresh tokens are single-use — when the server refreshes, it keeps the new to
 - `GET /api/widgets?lat=&lon=` — weather/news/gold/btc
 - `GET /api/widgets/weather|news|gold|btc`
 - `GET /api/youtube/status` — whether Data API / cookies are configured (booleans only)
+- `GET /api/youtube/cookies/status` · `POST|DELETE /api/youtube/cookies` (admin token)
 - `GET /api/youtube/search?q=`
 - `GET /api/youtube/resolve?id=` / `?url=`
 - `GET /api/youtube/media?url=` — CORS-safe media proxy

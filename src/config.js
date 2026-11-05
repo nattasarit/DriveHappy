@@ -47,8 +47,11 @@ const config = {
   goldApiUrl: process.env.GOLD_API_URL || 'https://api.chnwt.dev/thai-gold-api/latest',
   youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
   // Optional browser cookies (VISITOR_INFO1_LIVE / SID / …) to ease YouTube bot checks from Hostinger.
-  // Never commit real values — set only in hPanel. Helps stream resolve; not required for search.
+  // Never commit real values — set only in hPanel or via admin paste. Helps stream resolve; not required for search.
+  // Same-origin: the car browser CANNOT read youtube.com cookies for us — paste/export is required.
   youtubeCookies: (process.env.YOUTUBE_COOKIES || '').trim(),
+  // Shared secret for POST /api/youtube/cookies (paste-once admin). Empty = paste API disabled.
+  youtubeCookieAdminToken: (process.env.YOUTUBE_COOKIE_ADMIN_TOKEN || '').trim(),
   pipedApiBases: (process.env.PIPED_API_BASES ||
     [
       'https://api.piped.private.coffee',

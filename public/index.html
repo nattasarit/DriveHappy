@@ -78,13 +78,13 @@
       </div>
 
       <div id="yt-login-panel" class="yt-login-panel" hidden>
-        <p>เข้าสู่ระบบ Google/YouTube ในเบราว์เซอร์รถอาจถูกบล็อกคุกกี้ / iframe</p>
+        <p>เบราว์เซอร์บน DriveHappy <strong>อ่านคุกกี้ของ youtube.com ไม่ได้</strong> (same-origin) — ล็อกอินในแท็บ YouTube อย่างเดียวไม่ทำให้เซิร์ฟเวอร์เล่นคลิปที่ติดบอทได้</p>
         <div class="yt-login-actions">
-          <a class="btn btn-primary" href="https://accounts.google.com/ServiceLogin?service=youtube" target="_blank" rel="noopener">เปิดหน้า Login</a>
-          <a class="btn btn-ghost" href="https://www.youtube.com/" target="_blank" rel="noopener">เปิด YouTube.com</a>
+          <a class="btn btn-primary" href="https://www.youtube.com/" target="_blank" rel="noopener">เปิด YouTube.com</a>
+          <a class="btn btn-ghost" href="/youtube-cookies-admin.html">วางคุกกี้ให้เซิร์ฟเวอร์</a>
           <button type="button" class="btn btn-ghost" id="yt-login-dismiss">ปิด</button>
         </div>
-        <p class="yt-note">หากล็อกอินในรถไม่ได้ ให้ล็อกอินบนโทรศัพท์/คอมพิวเตอร์แล้วใช้ค้นหาแบบไม่ล็อกอินในรถ</p>
+        <p class="yt-note">วิธีที่ได้ผล: ล็อกอิน YouTube บนโทรศัพท์/คอม → export คุกกี้ → วางที่หน้าแอดมินหรือใส่ <code>YOUTUBE_COOKIES</code> ใน Hostinger · iframe login ในรถมักล้มเหลว</p>
       </div>
 
       <div id="yt-results" class="yt-results" aria-live="polite"></div>
