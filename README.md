@@ -81,16 +81,17 @@ Refresh tokens are single-use — when the server refreshes, it keeps the new to
 
 - In-app search, paste URL, and login entry points.
 - **Playback UI is `<canvas>` only** — there is no `<video>` tag in `index.html`.
+- Tapping a search result opens a **dedicated full-screen player page** (not an inline player under the results). **← รายการวิดีโอ** returns to the search results; dashboard exit is separate.
 - Decoder choice (Tesla): a **detached** `HTMLVideoElement` created with `document.createElement('video')` and **never appended** to the DOM. Frames are painted with `canvas.drawImage(decoder)` each animation frame; the same element feeds audio. Pure canvas + WebAudio demux/decode would need a WASM pipeline we do not ship; off-DOM video + canvas is the practical path so the in-car browser sees canvas media, not a page-level `<video>`.
 - Server `/api/youtube/resolve` prefers progressive muxed MP4 (≈360p–720p), demotes LBRY/HLS junk, then falls back to Innertube. `/api/youtube/media` same-origin proxies bytes (and avoids broken Piped `Content-Range` probes).
-- Play / pause on the player; **close** (header or ปิดคลิป) stops decode and returns to the dashboard.
+- Play / pause on the player; **ปิดคลิป** / Back stop decode and return to results.
 
 ### Verify on the car
 
 1. Open `https://hd.bkksoftkit.com` in the Tesla browser while parked/driving per your usual flow.
-2. Tap **YouTube** → search → tap a result.
-3. Confirm the player shows moving frames on the canvas (not a native video chrome) and audio plays.
-4. Tap **หยุดชั่วคราว** / **เล่น**, then **ปิดคลิป** or **← แดชบอร์ด** and confirm you are back on the glanceable dashboard with playback stopped.
+2. Tap **YouTube** → search → tap a result (opens a **full-screen** canvas page).
+3. Confirm moving frames on the canvas (not native video chrome) and audio plays.
+4. Tap **หยุดชั่วคราว** / **เล่น**, then **← รายการวิดีโอ** and confirm you are back on the search results with playback stopped. Use **แดชบอร์ด** / **← แดชบอร์ด** to leave YouTube entirely.
 
 ### Tesla browser limits (important)
 

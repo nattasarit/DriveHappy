@@ -61,36 +61,47 @@
   </main>
 
   <section id="youtube-app" class="youtube-app" hidden>
-    <header class="yt-header">
-      <button type="button" class="btn btn-ghost" id="yt-close">← แดชบอร์ด</button>
-      <p class="yt-title">YouTube</p>
-      <button type="button" class="btn btn-ghost" id="yt-login">เข้าสู่ระบบ</button>
-    </header>
+    <div id="yt-browse" class="yt-browse">
+      <header class="yt-header">
+        <button type="button" class="btn btn-ghost" id="yt-close">← แดชบอร์ด</button>
+        <p class="yt-title">YouTube</p>
+        <button type="button" class="btn btn-ghost" id="yt-login">เข้าสู่ระบบ</button>
+      </header>
 
-    <div class="yt-search-row">
-      <input id="yt-query" type="search" enterkeyhint="search" placeholder="ค้นหาบน YouTube" autocomplete="off" />
-      <button type="button" class="btn btn-primary" id="yt-search-btn">ค้นหา</button>
-    </div>
-    <div class="yt-url-row">
-      <input id="yt-url" type="url" placeholder="หรือวางลิงก์ YouTube" autocomplete="off" />
-      <button type="button" class="btn btn-ghost" id="yt-open-url">เปิด</button>
-    </div>
-
-    <div id="yt-login-panel" class="yt-login-panel" hidden>
-      <p>เข้าสู่ระบบ Google/YouTube ในเบราว์เซอร์รถอาจถูกบล็อกคุกกี้ / iframe</p>
-      <div class="yt-login-actions">
-        <a class="btn btn-primary" href="https://accounts.google.com/ServiceLogin?service=youtube" target="_blank" rel="noopener">เปิดหน้า Login</a>
-        <a class="btn btn-ghost" href="https://www.youtube.com/" target="_blank" rel="noopener">เปิด YouTube.com</a>
-        <button type="button" class="btn btn-ghost" id="yt-login-dismiss">ปิด</button>
+      <div class="yt-search-row">
+        <input id="yt-query" type="search" enterkeyhint="search" placeholder="ค้นหาบน YouTube" autocomplete="off" />
+        <button type="button" class="btn btn-primary" id="yt-search-btn">ค้นหา</button>
       </div>
-      <p class="yt-note">หากล็อกอินในรถไม่ได้ ให้ล็อกอินบนโทรศัพท์/คอมพิวเตอร์แล้วใช้ค้นหาแบบไม่ล็อกอินในรถ</p>
+      <div class="yt-url-row">
+        <input id="yt-url" type="url" placeholder="หรือวางลิงก์ YouTube" autocomplete="off" />
+        <button type="button" class="btn btn-ghost" id="yt-open-url">เปิด</button>
+      </div>
+
+      <div id="yt-login-panel" class="yt-login-panel" hidden>
+        <p>เข้าสู่ระบบ Google/YouTube ในเบราว์เซอร์รถอาจถูกบล็อกคุกกี้ / iframe</p>
+        <div class="yt-login-actions">
+          <a class="btn btn-primary" href="https://accounts.google.com/ServiceLogin?service=youtube" target="_blank" rel="noopener">เปิดหน้า Login</a>
+          <a class="btn btn-ghost" href="https://www.youtube.com/" target="_blank" rel="noopener">เปิด YouTube.com</a>
+          <button type="button" class="btn btn-ghost" id="yt-login-dismiss">ปิด</button>
+        </div>
+        <p class="yt-note">หากล็อกอินในรถไม่ได้ ให้ล็อกอินบนโทรศัพท์/คอมพิวเตอร์แล้วใช้ค้นหาแบบไม่ล็อกอินในรถ</p>
+      </div>
+
+      <div id="yt-results" class="yt-results" aria-live="polite"></div>
     </div>
+  </section>
 
-    <div id="yt-results" class="yt-results" aria-live="polite"></div>
-
-    <div id="yt-player" class="yt-player" hidden>
-      <canvas id="yt-canvas" width="1280" height="720" aria-label="ตัวเล่น YouTube แบบ canvas"></canvas>
+  <!-- Dedicated full-viewport canvas player (no <video> in the document). -->
+  <section id="yt-player-page" class="yt-player-page" hidden aria-label="หน้าเล่นวิดีโอ">
+    <header class="yt-player-top">
+      <button type="button" class="btn btn-ghost" id="yt-back">← รายการวิดีโอ</button>
       <p class="yt-now" id="yt-now-title"></p>
+      <button type="button" class="btn btn-ghost" id="yt-exit-dash">แดชบอร์ด</button>
+    </header>
+    <div class="yt-stage">
+      <canvas id="yt-canvas" width="1280" height="720" aria-label="ตัวเล่น YouTube แบบ canvas"></canvas>
+    </div>
+    <div class="yt-player-bar">
       <div class="yt-controls">
         <button type="button" class="btn btn-primary" id="yt-play">เล่น</button>
         <button type="button" class="btn btn-ghost" id="yt-pause">หยุดชั่วคราว</button>

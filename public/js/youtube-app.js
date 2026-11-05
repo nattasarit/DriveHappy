@@ -3,8 +3,9 @@
 
   const dashboard = $('dashboard');
   const app = $('youtube-app');
+  const browse = $('yt-browse');
   const results = $('yt-results');
-  const player = $('yt-player');
+  const playerPage = $('yt-player-page');
   const canvas = $('yt-canvas');
   const ctx = canvas.getContext('2d', { alpha: false });
   const nowTitle = $('yt-now-title');
@@ -14,12 +15,12 @@
   /**
    * Tesla in-car browsers often restrict visible HTML <video> while driving.
    * Strategy: keep a detached (never-appended) HTMLMediaElement solely as a
-   * decoder, draw every frame onto <canvas>, and let the same element feed
-   * audio. Pure canvas+WebAudio decode is not practical in-browser without a
-   * WASM demuxer; off-DOM <video> + canvas is the Tesla-friendly compromise.
+   * decoder, draw every frame onto a full-screen <canvas>, and let the same
+   * element feed audio. Pure canvas+WebAudio decode is not practical without
+   * a WASM demuxer; off-DOM <video> + canvas is the Tesla-friendly compromise.
    */
   let decoder = null;
-  let audioDecoder = null; // only when stream is video-only + separate audioUrl
+  let audioDecoder = null;
   let raf = 0;
   let playing = false;
   let lastObjectUrl = null;
@@ -73,9 +74,23 @@
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
 
+  /** Match canvas buffer to the on-screen stage for sharp Tesla/desktop frames. */
+  function syncCanvasSize() {
+    const stage = canvas.parentElement;
+    if (!stage) return;
+    const rect = stage.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width));
+    const h = Math.max(180, Math.floor(rect.height));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
+
   function drawFrame() {
     if (!decoder) return;
     if (decoder.readyState >= 2 && decoder.videoWidth > 0) {
+      syncCanvasSize();
       const cw = canvas.width;
       const ch = canvas.height;
       const vw = decoder.videoWidth;
@@ -107,7 +122,7 @@
     }
   }
 
-  function destroyPlayback() {
+  function stopDecodeOnly() {
     stopLoop();
     resetMediaElement(decoder);
     resetMediaElement(audioDecoder);
@@ -115,9 +130,36 @@
     audioDecoder = null;
     revokeObjectUrl();
     clearCanvas();
-    player.hidden = true;
     nowTitle.textContent = '';
     setStatus('');
+  }
+
+  function showBrowse() {
+    playerPage.hidden = true;
+    app.hidden = false;
+    if (browse) browse.hidden = false;
+    dashboard.hidden = true;
+  }
+
+  function showPlayerPage() {
+    dashboard.hidden = true;
+    app.hidden = true;
+    playerPage.hidden = false;
+    syncCanvasSize();
+  }
+
+  /** Leave the full-screen player and return to search results. */
+  function backToResults() {
+    stopDecodeOnly();
+    showBrowse();
+  }
+
+  /** Leave YouTube entirely and return to the glanceable dashboard. */
+  function closeToDashboard() {
+    stopDecodeOnly();
+    playerPage.hidden = true;
+    app.hidden = true;
+    dashboard.hidden = false;
   }
 
   function waitForEvent(el, event, timeoutMs = 25000) {
@@ -153,17 +195,17 @@
   }
 
   async function playResolved(data) {
-    destroyPlayback();
-    player.hidden = false;
+    stopDecodeOnly();
+    showPlayerPage();
     nowTitle.textContent = data.title || data.videoId;
     if (!data.streamUrl) {
       setStatus('ไม่พบสตรีมสำหรับคลิปนี้ — ลองคลิปอื่น หรือตั้ง YOUTUBE_API_KEY / Piped');
       return;
     }
 
-    const needsSeparateAudio = Boolean(data.audioUrl) && Boolean(data.videoOnlyUrl) && data.streamUrl === data.videoOnlyUrl;
-    const videoRemote = data.streamUrl;
-    const mediaUrl = proxyMediaUrl(videoRemote);
+    const needsSeparateAudio =
+      Boolean(data.audioUrl) && Boolean(data.videoOnlyUrl) && data.streamUrl === data.videoOnlyUrl;
+    const mediaUrl = proxyMediaUrl(data.streamUrl);
 
     setStatus(`กำลังโหลดสตรีม (${data.quality || data.mimeType || 'mp4'} · ${data.provider || ''})…`);
 
@@ -189,7 +231,6 @@
     }
 
     try {
-      // User gesture from search-result click should unlock audio.
       const plays = [v.play()];
       if (audioDecoder) plays.push(audioDecoder.play());
       await Promise.all(plays);
@@ -202,10 +243,10 @@
   }
 
   async function openVideo(idOrUrl) {
-    setStatus('กำลังโหลดสตรีม…');
-    player.hidden = false;
+    showPlayerPage();
     nowTitle.textContent = '';
     clearCanvas();
+    setStatus('กำลังโหลดสตรีม…');
     try {
       const res = await fetch(`/api/youtube/resolve?id=${encodeURIComponent(idOrUrl)}`);
       const json = await res.json();
@@ -248,7 +289,8 @@
   async function doSearch() {
     const q = $('yt-query').value.trim();
     if (!q) return;
-    destroyPlayback();
+    stopDecodeOnly();
+    showBrowse();
     results.textContent = 'กำลังค้นหา…';
     try {
       const res = await fetch(`/api/youtube/search?q=${encodeURIComponent(q)}`);
@@ -261,16 +303,12 @@
   }
 
   function open() {
+    stopDecodeOnly();
+    playerPage.hidden = true;
     dashboard.hidden = true;
     app.hidden = false;
+    if (browse) browse.hidden = false;
     loginPanel.hidden = true;
-  }
-
-  /** Close playback and return to the glanceable dashboard. */
-  function close() {
-    destroyPlayback();
-    app.hidden = true;
-    dashboard.hidden = false;
   }
 
   async function togglePlay() {
@@ -292,11 +330,12 @@
     if (decoder) decoder.pause();
     if (audioDecoder) audioDecoder.pause();
     stopLoop();
-    // Keep last frame on canvas
     setStatus('หยุดชั่วคราว');
   }
 
-  $('yt-close').addEventListener('click', close);
+  $('yt-close').addEventListener('click', closeToDashboard);
+  $('yt-exit-dash').addEventListener('click', closeToDashboard);
+  $('yt-back').addEventListener('click', backToResults);
   $('yt-search-btn').addEventListener('click', doSearch);
   $('yt-query').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doSearch();
@@ -309,8 +348,8 @@
     togglePlay();
   });
   $('yt-pause').addEventListener('click', pause);
-  // "ปิดคลิป" ends playback and returns to dashboard (Tesla UX: leave media mode).
-  $('yt-stop').addEventListener('click', close);
+  // ปิดคลิป = stop and return to search results (not dashboard).
+  $('yt-stop').addEventListener('click', backToResults);
   $('yt-login').addEventListener('click', () => {
     loginPanel.hidden = !loginPanel.hidden;
   });
@@ -318,7 +357,18 @@
     loginPanel.hidden = true;
   });
 
+  window.addEventListener('resize', () => {
+    if (!playerPage.hidden) syncCanvasSize();
+  });
+
   clearCanvas();
 
-  window.DriveHappyYouTube = { open, close, openVideo, pause, play: togglePlay };
+  window.DriveHappyYouTube = {
+    open,
+    close: closeToDashboard,
+    openVideo,
+    pause,
+    play: togglePlay,
+    backToResults,
+  };
 })();
