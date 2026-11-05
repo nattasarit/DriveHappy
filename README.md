@@ -80,8 +80,17 @@ Refresh tokens are single-use — when the server refreshes, it keeps the new to
 ## YouTube (canvas)
 
 - In-app search, paste URL, and login entry points.
-- Playback draws frames to **`<canvas>`** — no `<video>` element in the HTML document (off-DOM decoder only).
-- Close returns to the dashboard and stops playback.
+- **Playback UI is `<canvas>` only** — there is no `<video>` tag in `index.html`.
+- Decoder choice (Tesla): a **detached** `HTMLVideoElement` created with `document.createElement('video')` and **never appended** to the DOM. Frames are painted with `canvas.drawImage(decoder)` each animation frame; the same element feeds audio. Pure canvas + WebAudio demux/decode would need a WASM pipeline we do not ship; off-DOM video + canvas is the practical path so the in-car browser sees canvas media, not a page-level `<video>`.
+- Server `/api/youtube/resolve` prefers progressive muxed MP4 (≈360p–720p), demotes LBRY/HLS junk, then falls back to Innertube. `/api/youtube/media` same-origin proxies bytes (and avoids broken Piped `Content-Range` probes).
+- Play / pause on the player; **close** (header or ปิดคลิป) stops decode and returns to the dashboard.
+
+### Verify on the car
+
+1. Open `https://hd.bkksoftkit.com` in the Tesla browser while parked/driving per your usual flow.
+2. Tap **YouTube** → search → tap a result.
+3. Confirm the player shows moving frames on the canvas (not a native video chrome) and audio plays.
+4. Tap **หยุดชั่วคราว** / **เล่น**, then **ปิดคลิป** or **← แดชบอร์ด** and confirm you are back on the glanceable dashboard with playback stopped.
 
 ### Tesla browser limits (important)
 
@@ -90,6 +99,7 @@ Refresh tokens are single-use — when the server refreshes, it keeps the new to
 - Some media MIME types / autoplay policies still fail even with canvas — treat playback as **best-effort** per firmware.
 - Stream resolution uses Piped + Innertube fallbacks; some clips (especially live / bot-gated) may require login or fail until YouTube softens checks.
 - If login fails in the car: sign in on phone/desktop; use anonymous search in the car.
+- Do not regress Tesla **read-only / no-wake / no-command** rules when touching vehicle APIs (YouTube path does not call Tesla).
 
 ## API surface
 

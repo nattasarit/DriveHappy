@@ -106,6 +106,52 @@ async function searchVideos(query) {
   };
 }
 
+/**
+ * Score Piped/Innertube candidate streams for Tesla canvas playback.
+ * Prefer progressive muxed MP4 (itag 18/360p/720p). Demote LBRY mirrors and HLS —
+ * LBRY often wins a naive height sort (height=0) but returns multi‑GB junk that
+ * the off-DOM decoder cannot usefully play.
+ */
+function streamScore(s) {
+  if (!s?.url) return -10000;
+  const mime = String(s.mimeType || s.format || '').toLowerCase();
+  const quality = String(s.quality || s.qualityLabel || '').toLowerCase();
+  const codec = String(s.codec || '').toLowerCase();
+  const height = Number(s.height) || 0;
+  let score = 0;
+
+  if (/lbry/.test(quality) || /odycdn\.com|lbry/.test(s.url)) score -= 500;
+  if (/mpegurl|m3u8|hls/.test(mime) || /\bhls\b/.test(quality)) score -= 400;
+  if (/webm/.test(mime)) score -= 20; // MP4 more reliable in car browsers
+  if (/mp4/.test(mime)) score += 80;
+  if (/avc1|h264/.test(mime + codec)) score += 20;
+  if (/mp4a|aac/.test(mime + codec)) score += 15;
+
+  if (height) score += Math.min(height, 720);
+  else if (/1080/.test(quality)) score += 500; // prefer ≤720 below
+  else if (/720/.test(quality)) score += 720;
+  else if (/480/.test(quality)) score += 480;
+  else if (/360/.test(quality)) score += 360;
+  else if (/240|144/.test(quality)) score += 200;
+
+  // Cap preference: 360–720p is ideal for in-car bandwidth
+  if (height > 720 || /1080|1440|2160|4k/.test(quality)) score -= 150;
+  if (/720/.test(quality) || height === 720) score += 40;
+  if (/360/.test(quality) || height === 360) score += 60;
+
+  if (s.videoOnly === true) score -= 80; // need separate audio
+  return score;
+}
+
+function pickBestStream(streams) {
+  const ranked = (streams || [])
+    .filter((s) => s && s.url)
+    .map((s) => ({ s, score: streamScore(s) }))
+    .filter((x) => x.score > -300)
+    .sort((a, b) => b.score - a.score);
+  return ranked[0]?.s || null;
+}
+
 async function resolveViaPiped(id) {
   let lastErr;
   for (const base of config.pipedApiBases) {
@@ -119,24 +165,31 @@ async function resolveViaPiped(id) {
       if (!contentType.includes('json')) throw new Error(`Piped streams non-JSON from ${base}`);
       const json = await res.json();
       if (json.error) throw new Error(String(json.error).slice(0, 160));
-      const progressive = (json.videoStreams || json.video_streams || [])
-        .filter((s) => s && (s.videoOnly === false || s.videoOnly == null) && s.url)
-        .sort((a, b) => (b.height || 0) - (a.height || 0));
-      const videoOnly = (json.videoStreams || [])
+      const allVideo = json.videoStreams || json.video_streams || [];
+      const progressive = allVideo.filter(
+        (s) => s && (s.videoOnly === false || s.videoOnly == null) && s.url
+      );
+      const videoOnly = allVideo
         .filter((s) => s.videoOnly && s.url)
-        .sort((a, b) => (b.height || 0) - (a.height || 0));
-      const audioOnly = (json.audioStreams || json.audio_streams || []).filter((s) => s.url);
-      const chosen = progressive[0] || null;
-      if (!chosen?.url && !videoOnly[0]?.url) throw new Error(`No playable streams from ${base}`);
+        .sort((a, b) => streamScore(b) - streamScore(a));
+      const audioOnly = (json.audioStreams || json.audio_streams || [])
+        .filter((s) => s.url)
+        .sort((a, b) => streamScore(b) - streamScore(a));
+      const chosen = pickBestStream(progressive);
+      const fallbackVideo = pickBestStream(videoOnly);
+      // If Piped only offered LBRY/HLS (filtered out by score), fail so Innertube can win.
+      if (!chosen?.url && !fallbackVideo?.url) {
+        throw new Error(`No canvas-friendly progressive stream from ${base}`);
+      }
       return {
         videoId: id,
         title: json.title,
         channel: json.uploader || json.uploaderName,
         thumbnail: json.thumbnailUrl || json.thumbnail,
         duration: json.duration,
-        streamUrl: chosen?.url || videoOnly[0]?.url || null,
-        mimeType: chosen?.mimeType || chosen?.format || null,
-        quality: chosen?.quality || chosen?.height || null,
+        streamUrl: chosen?.url || fallbackVideo?.url || null,
+        mimeType: chosen?.mimeType || chosen?.format || fallbackVideo?.mimeType || null,
+        quality: chosen?.quality || chosen?.height || fallbackVideo?.quality || null,
         audioUrl: audioOnly[0]?.url || null,
         videoOnlyUrl: videoOnly[0]?.url || null,
         provider: `piped:${base}`,
@@ -186,11 +239,36 @@ async function resolveViaInnertube(id) {
     err.loginRequiredHint = status === 'LOGIN_REQUIRED';
     throw err;
   }
-  const formats = json?.streamingData?.formats || [];
-  const progressive = formats
-    .filter((f) => f.url && String(f.mimeType || '').includes('video'))
-    .sort((a, b) => (b.height || 0) - (a.height || 0));
-  const chosen = progressive[0];
+  const formats = (json?.streamingData?.formats || []).map((f) => ({
+    url: f.url,
+    mimeType: f.mimeType,
+    quality: f.qualityLabel || f.quality,
+    height: f.height,
+    codec: f.mimeType,
+    videoOnly: false,
+  }));
+  const adaptive = json?.streamingData?.adaptiveFormats || [];
+  const audioOnly = adaptive
+    .filter((f) => f.url && String(f.mimeType || '').startsWith('audio/'))
+    .map((f) => ({
+      url: f.url,
+      mimeType: f.mimeType,
+      quality: f.bitrate ? `${Math.round(f.bitrate / 1000)}kbps` : null,
+      height: 0,
+      videoOnly: false,
+    }))
+    .sort((a, b) => streamScore(b) - streamScore(a));
+  const videoOnly = adaptive
+    .filter((f) => f.url && String(f.mimeType || '').startsWith('video/'))
+    .map((f) => ({
+      url: f.url,
+      mimeType: f.mimeType,
+      quality: f.qualityLabel || f.quality,
+      height: f.height,
+      codec: f.mimeType,
+      videoOnly: true,
+    }));
+  const chosen = pickBestStream(formats) || pickBestStream(videoOnly);
   if (!chosen?.url) throw new Error('Innertube returned no progressive URL');
   return {
     videoId: id,
@@ -200,9 +278,9 @@ async function resolveViaInnertube(id) {
     duration: Number(json?.videoDetails?.lengthSeconds) || null,
     streamUrl: chosen.url,
     mimeType: chosen.mimeType || null,
-    quality: chosen.qualityLabel || chosen.height || null,
-    audioUrl: null,
-    videoOnlyUrl: null,
+    quality: chosen.quality || chosen.height || null,
+    audioUrl: chosen.videoOnly ? audioOnly[0]?.url || null : null,
+    videoOnlyUrl: chosen.videoOnly ? chosen.url : videoOnly[0]?.url || null,
     provider: 'innertube:ANDROID_VR',
     loginRequiredHint: false,
   };
