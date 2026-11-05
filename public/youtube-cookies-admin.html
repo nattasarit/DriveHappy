@@ -73,21 +73,27 @@
 
     <ol class="yt-note" style="padding-left:1.25rem;line-height:1.55;margin:0 0 1rem">
       <li>ตั้ง <code>YOUTUBE_COOKIE_ADMIN_TOKEN</code> ใน Hostinger hPanel แล้ว <strong>Redeploy/Restart</strong></li>
-      <li>บนคอม/มือถือ (ตอนจอด): เปิด <a href="https://www.youtube.com" target="_blank" rel="noopener">youtube.com</a> แล้วล็อกอิน Google</li>
-      <li><strong>วิธีง่าย (Chrome/Edge บนคอม):</strong> กด F12 → แท็บ <em>Application</em> (หรือ Storage) → Cookies → <code>https://www.youtube.com</code> → คัดลอกค่าอย่างน้อย
-        <code>SID</code>, <code>HSID</code>, <code>SSID</code>, <code>__Secure-3PSID</code> แล้วประกอบเป็นบรรทัดเดียวแบบ
-        <code>SID=...; HSID=...; SSID=...; __Secure-3PSID=...</code></li>
-      <li><strong>หรือ</strong> ใช้ส่วนขยาย “Get cookies.txt LOCALLY” / “cookies.txt” แล้ววางเนื้อหาไฟล์ทั้งก้อนที่นี่</li>
-      <li>ใส่โทเคนแอดมินด้านล่าง → วางคุกกี้ → กด <strong>บันทึกคุกกี้</strong></li>
-      <li>เปิด DriveHappy ในรถ ลองเล่นคลิปอีกครั้ง · ตรวจ <code>/api/youtube/status</code> ว่า <code>cookiesConfigured: true</code></li>
+      <li>บนคอม (ตอนจอด): เปิด <a href="https://www.youtube.com" target="_blank" rel="noopener">youtube.com</a> แล้วล็อกอิน Google</li>
+      <li><strong>บังคับต้องมีชื่อคุกกี้เหล่านี้</strong> (ค่าอย่างน้อย):
+        <ul>
+          <li><code>SID</code> <em>หรือ</em> <code>__Secure-3PSID</code></li>
+          <li><code>SAPISID</code> <em>หรือ</em> <code>__Secure-3PAPISID</code> ← สำคัญมาก (ใช้ทำ SAPISIDHASH)</li>
+        </ul>
+        แนะนำเพิ่ม: <code>HSID</code>, <code>SSID</code>, <code>APISID</code>, <code>LOGIN_INFO</code>, <code>VISITOR_INFO1_LIVE</code>
+      </li>
+      <li><strong>Chrome/Edge:</strong> F12 → Application → Cookies → <code>https://www.youtube.com</code> → คัดลอกเป็นบรรทัดเดียว
+        <code>SID=...; __Secure-3PSID=...; SAPISID=...; __Secure-3PAPISID=...; HSID=...; SSID=...; APISID=...; LOGIN_INFO=...</code>
+        · หรือใช้ส่วนขยาย cookies.txt แล้ววางทั้งไฟล์ (ดีกว่า เพราะครบชื่อ)</li>
+      <li>ใส่โทเคน → วางคุกกี้ → <strong>บันทึก</strong> (ระบบจะปฏิเสธถ้าขาด SAPISID)</li>
+      <li>ตรวจ <code>/api/youtube/status</code> → <code>cookiesConfigured: true</code> และ <code>cookieCompleteness.complete: true</code> แล้วลองเล่นในรถ</li>
     </ol>
-    <p class="yt-note">ทางเลือกโดยไม่ใช้หน้านี้: ใส่ค่าเดียวกันใน hPanel เป็นตัวแปร <code>YOUTUBE_COOKIES</code> แล้ว Redeploy</p>
+    <p class="yt-note">หมายเหตุ: คุกกี้แค่ 4 ตัวแบบ SID/HSID/SSID/__Secure-3PSID <strong>ไม่พอ</strong> — ANDROID_VR ไม่ใช้คุกกี้เบราว์เซอร์ ต้องใช้ WEB + SAPISIDHASH</p>
 
     <label for="token">โทเคนแอดมิน (= ค่า YOUTUBE_COOKIE_ADMIN_TOKEN)</label>
     <input id="token" type="password" autocomplete="off" placeholder="เช่น dri8-secret-change-me" />
 
     <label for="cookies">คุกกี้ (Cookie header หรือ Netscape cookies.txt)</label>
-    <textarea id="cookies" placeholder="SID=xxxx; HSID=yyyy; SSID=zzzz; __Secure-3PSID=wwww&#10;&#10;# หรือวางไฟล์ Netscape cookies.txt ทั้งก้อน"></textarea>
+    <textarea id="cookies" placeholder="SID=...; __Secure-3PSID=...; SAPISID=...; __Secure-3PAPISID=...; HSID=...; SSID=...; APISID=...; LOGIN_INFO=...&#10;&#10;# หรือวางไฟล์ Netscape cookies.txt ทั้งก้อน"></textarea>
 
     <div class="yt-login-actions" style="margin-top:1rem">
       <button type="button" class="btn btn-primary" id="btn-save">บันทึกคุกกี้</button>
@@ -105,12 +111,18 @@
         const res = await fetch('/api/youtube/cookies/status');
         const json = await res.json();
         const d = json.data || {};
+        const c = d.cookieCompleteness || {};
+        const req = d.requiredCookieNames || {};
         statusEl.textContent =
           'cookiesConfigured=' + d.cookiesConfigured +
           '\nsource=' + (d.source || '-') +
           '\nupdatedAt=' + (d.updatedAt || '-') +
           '\nnameCount=' + (d.nameCount ?? '-') +
           '\nadminPasteEnabled=' + d.adminPasteEnabled +
+          '\ncomplete=' + (c.complete ?? '-') +
+          '\nhasSapisid=' + (c.hasSapisid ?? '-') +
+          '\nmissingRequired=' + JSON.stringify(c.missingRequired || []) +
+          '\nrequired=' + JSON.stringify(req) +
           '\n\n' + (d.crossOriginNote || '');
       } catch (err) {
         statusEl.textContent = 'โหลดสถานะไม่สำเร็จ: ' + err.message;

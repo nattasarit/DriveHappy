@@ -35,12 +35,19 @@ router.post('/cookies', (req, res) => {
     res.json({
       ok: true,
       data,
-      message: 'บันทึกคุกกี้แล้ว — ลองเล่นคลิปที่เคย LOGIN_REQUIRED อีกครั้ง (อย่าแชร์โทเคนแอดมิน)',
+      message:
+        'บันทึกคุกกี้ครบแล้ว — เซิร์ฟเวอร์จะใช้ Cookie + SAPISIDHASH กับ Innertube WEB ลองเล่นคลิปอีกครั้ง (อย่าแชร์โทเคน/คุกกี้ในแชท)',
     });
   } catch (err) {
     const status =
       err.code === 'UNAUTHORIZED' ? 401 : err.code === 'ADMIN_DISABLED' ? 503 : 400;
-    res.status(status).json({ ok: false, error: err.message, code: err.code || null });
+    res.status(status).json({
+      ok: false,
+      error: err.message,
+      code: err.code || null,
+      missingRequired: err.missingRequired || null,
+      missingRecommended: err.missingRecommended || null,
+    });
   }
 });
 
