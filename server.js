@@ -14,6 +14,7 @@ const widgetRoutes = require('./src/routes/widgets');
 const youtubeRoutes = require('./src/routes/youtube');
 const teslaAuthRoutes = require('./src/routes/teslaAuth');
 const { getUsage } = require('./src/tesla/client');
+const { youtubeIntegrationStatus } = require('./src/youtube/service');
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.get('/api/health', (_req, res) => {
     node: process.version,
     teslaUsage: getUsage(),
     policy: { neverWake: true, neverCommand: true },
+    youtube: youtubeIntegrationStatus(),
   });
 });
 

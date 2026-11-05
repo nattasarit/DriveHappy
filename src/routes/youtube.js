@@ -1,9 +1,18 @@
 'use strict';
 
 const express = require('express');
-const { searchVideos, resolveStreams, extractVideoId } = require('../youtube/service');
+const {
+  searchVideos,
+  resolveStreams,
+  extractVideoId,
+  youtubeIntegrationStatus,
+} = require('../youtube/service');
 
 const router = express.Router();
+
+router.get('/status', (_req, res) => {
+  res.json({ ok: true, data: youtubeIntegrationStatus() });
+});
 
 router.get('/search', async (req, res) => {
   try {
@@ -25,7 +34,13 @@ router.get('/resolve', async (req, res) => {
     const data = await resolveStreams(id);
     res.json({ ok: true, data });
   } catch (err) {
-    res.status(502).json({ ok: false, error: err.message });
+    const errorKind = err.errorKind || 'unavailable';
+    res.status(502).json({
+      ok: false,
+      error: err.message,
+      errorKind,
+      loginRequiredHint: Boolean(err.loginRequiredHint),
+    });
   }
 });
 

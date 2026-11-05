@@ -46,8 +46,29 @@ const config = {
   newsFeedUrl: process.env.NEWS_FEED_URL || 'https://www.thairath.co.th/rss/news',
   goldApiUrl: process.env.GOLD_API_URL || 'https://api.chnwt.dev/thai-gold-api/latest',
   youtubeApiKey: process.env.YOUTUBE_API_KEY || '',
+  // Optional browser cookies (VISITOR_INFO1_LIVE / SID / …) to ease YouTube bot checks from Hostinger.
+  // Never commit real values — set only in hPanel. Helps stream resolve; not required for search.
+  youtubeCookies: (process.env.YOUTUBE_COOKIES || '').trim(),
   pipedApiBases: (process.env.PIPED_API_BASES ||
-    'https://api.piped.private.coffee,https://pipedapi.kavin.rocks,https://pipedapi.adminforge.de')
+    [
+      'https://api.piped.private.coffee',
+      'https://pipedapi.ducks.party',
+      'https://pipedapi.adminforge.de',
+      'https://pipedapi.kavin.rocks',
+      'https://pipedapi.reallyaweso.me',
+      'https://pipedapi.darkness.services',
+    ].join(','))
+    .split(',')
+    .map((s) => s.trim().replace(/\/$/, ''))
+    .filter(Boolean),
+  invidiousApiBases: (process.env.INVIDIOUS_API_BASES ||
+    [
+      'https://inv.nadeko.net',
+      'https://invidious.nerdvpn.de',
+      'https://yewtu.be',
+      'https://invidious.flokinet.to',
+      'https://vid.puffyan.us',
+    ].join(','))
     .split(',')
     .map((s) => s.trim().replace(/\/$/, ''))
     .filter(Boolean),
