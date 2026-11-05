@@ -87,7 +87,12 @@
       <li>ใส่โทเคน → วางคุกกี้ → <strong>บันทึก</strong> (ระบบจะปฏิเสธถ้าขาด SAPISID)</li>
       <li>ตรวจ <code>/api/youtube/status</code> → <code>cookiesConfigured: true</code> และ <code>cookieCompleteness.complete: true</code> แล้วลองเล่นในรถ</li>
     </ol>
-    <p class="yt-note">หมายเหตุ: คุกกี้แค่ 4 ตัวแบบ SID/HSID/SSID/__Secure-3PSID <strong>ไม่พอ</strong> — ANDROID_VR ไม่ใช้คุกกี้เบราว์เซอร์ ต้องใช้ WEB + SAPISIDHASH</p>
+    <p class="yt-note">หมายเหตุ: คุกกี้แค่ 4 ตัวแบบ SID/HSID/SSID/__Secure-3PSID <strong>ไม่พอ</strong> — ต้องมี SAPISID สำหรับ WEB + SAPISIDHASH</p>
+    <p class="warn">
+      ถ้า <code>cookieCompleteness.complete=true</code> แล้วยังขึ้นบอท: มักเป็นเพราะ <strong>IP ดาต้าเซ็นเตอร์ Hostinger</strong>
+      ไม่ใช่เพราะขาด SAPISID — ตั้ง <code>YOUTUBE_FETCH_PROXY</code> เป็นพร็อกซีบ้าน/residential แล้ว Restart
+      · อย่าใส่เครื่องหมาย <code>"</code> ครอบค่าทั้งก้อนใน hPanel · Piped ก็โดนบอทเดียวกัน
+    </p>
 
     <label for="token">โทเคนแอดมิน (= ค่า YOUTUBE_COOKIE_ADMIN_TOKEN)</label>
     <input id="token" type="password" autocomplete="off" placeholder="เช่น dri8-secret-change-me" />
@@ -113,17 +118,23 @@
         const d = json.data || {};
         const c = d.cookieCompleteness || {};
         const req = d.requiredCookieNames || {};
+        const h = d.cookieHygiene || {};
         statusEl.textContent =
           'cookiesConfigured=' + d.cookiesConfigured +
           '\nsource=' + (d.source || '-') +
           '\nupdatedAt=' + (d.updatedAt || '-') +
           '\nnameCount=' + (d.nameCount ?? '-') +
           '\nadminPasteEnabled=' + d.adminPasteEnabled +
+          '\nfetchProxyConfigured=' + d.fetchProxyConfigured +
           '\ncomplete=' + (c.complete ?? '-') +
           '\nhasSapisid=' + (c.hasSapisid ?? '-') +
+          '\nsapisidHashReady=' + (h.sapisidHashReady ?? '-') +
+          '\nhygieneSuspicious=' + (h.suspicious ?? '-') +
+          '\nsapisidValueLengthBand=' + (h.sapisidValueLengthBand ?? '-') +
+          '\nenvelopeQuoted=' + (h.envelopeQuoted ?? '-') +
           '\nmissingRequired=' + JSON.stringify(c.missingRequired || []) +
-          '\nrequired=' + JSON.stringify(req) +
-          '\n\n' + (d.crossOriginNote || '');
+          '\n\n' + (d.crossOriginNote || '') +
+          '\n\n' + (d.datacenterNote || '');
       } catch (err) {
         statusEl.textContent = 'โหลดสถานะไม่สำเร็จ: ' + err.message;
       }

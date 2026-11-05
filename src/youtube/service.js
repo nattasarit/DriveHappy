@@ -1,16 +1,28 @@
 'use strict';
 
+const { ProxyAgent, fetch: undiciFetch } = require('undici');
 const { config } = require('../config');
 const { cache } = require('../cache');
 const {
   getYoutubeCookieHeader,
   getCookieMap,
+  getCookieFingerprint,
   buildSapisidHashAuthorization,
   cookiesStatus,
   YOUTUBE_ORIGIN,
 } = require('./cookies');
 
-const FETCH_TIMEOUT_MS = 12_000;
+const FETCH_TIMEOUT_MS = 14_000;
+
+let youtubeProxyAgent = null;
+function getYoutubeDispatcher() {
+  const proxy = config.youtubeFetchProxy;
+  if (!proxy) return undefined;
+  if (!youtubeProxyAgent) {
+    youtubeProxyAgent = new ProxyAgent(proxy);
+  }
+  return youtubeProxyAgent;
+}
 
 function extractVideoId(input) {
   if (!input) return null;
@@ -62,11 +74,25 @@ function classifyUpstreamError(message, status) {
   return 'unavailable';
 }
 
-function thaiErrorMessage(kind) {
+function thaiErrorMessage(kind, ctx = {}) {
+  const complete = Boolean(ctx.cookiesComplete);
+  const proxy = Boolean(ctx.fetchProxyConfigured);
+  const hygieneBad = Boolean(ctx.cookieHygieneSuspicious);
   switch (kind) {
     case 'bot_check':
+      if (complete) {
+        return (
+          'YouTube ยังบล็อก IP เซิร์ฟเวอร์ (ดาต้าเซ็นเตอร์ Hostinger) แม้คุกกี้ครบแล้วรวม SAPISID — ' +
+          (hygieneBad
+            ? 'ตรวจว่าค่าคุกกี้ไม่ถูกตัด/ครอบด้วยเครื่องหมายคำพูดใน hPanel แล้ว '
+            : '') +
+          (proxy
+            ? 'พร็อกซีที่ตั้งไว้ยังเข้า YouTube ไม่ได้ หรือคุกกี้หมดอายุ ให้ export ใหม่ที่ /youtube-cookies-admin.html'
+            : 'ทางออกที่จริงจัง: ตั้ง YOUTUBE_FETCH_PROXY เป็นพร็อกซีบ้าน/residential แล้ว Restart — หรือ refresh คุกกี้ที่หน้าแอดมิน (Piped ก็โดนบอทเดียวกัน)')
+        );
+      }
       return (
-        'YouTube ยังตรวจบอทอยู่ — คุกกี้ที่วางอาจไม่ครบ (ต้องมี SAPISID หรือ __Secure-3PAPISID ด้วย ไม่ใช่แค่ SID) ' +
+        'YouTube ยังตรวจบอทอยู่ — คุกกี้ยังไม่ครบ (ต้องมี SAPISID หรือ __Secure-3PAPISID ด้วย ไม่ใช่แค่ SID) ' +
         'หรือหมดอายุแล้ว ให้ export ใหม่จาก Chrome ที่ล็อกอิน youtube.com แล้ววางที่ /youtube-cookies-admin.html'
       );
     case 'login_required':
@@ -84,8 +110,26 @@ function thaiErrorMessage(kind) {
 async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  // Route only YouTube hosts through optional residential proxy (Piped/Invidious stay direct).
+  const host = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return '';
+    }
+  })();
+  const viaYoutubeProxy = /(?:^|\.)youtube\.com$|(?:^|\.)googlevideo\.com$|(?:^|\.)ytimg\.com$/i.test(
+    host
+  );
+  const dispatcher = viaYoutubeProxy ? getYoutubeDispatcher() : undefined;
+  const doFetch = dispatcher ? undiciFetch : fetch;
   try {
-    const res = await fetch(url, { ...options, signal: ctrl.signal, redirect: 'follow' });
+    const res = await doFetch(url, {
+      ...options,
+      signal: ctrl.signal,
+      redirect: 'follow',
+      ...(dispatcher ? { dispatcher } : {}),
+    });
     const contentType = res.headers.get('content-type') || '';
     const text = await res.text();
     let json = null;
@@ -312,21 +356,27 @@ function innertubeHeaders(spec) {
     Accept: 'application/json',
     'Accept-Language': 'en-US,en;q=0.9,th;q=0.8',
   };
-  const cookie = getYoutubeCookieHeader();
-  if (cookie) headers.Cookie = cookie;
   if (spec.visitorData) {
     headers['X-Goog-Visitor-Id'] = spec.visitorData;
   }
 
-  // Browser cookies only authenticate the WEB / MWEB Innertube clients when paired with SAPISIDHASH.
-  if (spec.useSapisidHash && cookie) {
-    const auth = buildSapisidHashAuthorization(getCookieMap(), YOUTUBE_ORIGIN);
-    if (auth) {
-      headers.Authorization = auth;
-      headers['X-Origin'] = YOUTUBE_ORIGIN;
-      headers.Origin = YOUTUBE_ORIGIN;
-      headers.Referer = `${YOUTUBE_ORIGIN}/`;
+  // CRITICAL: only WEB/MWEB get browser cookies. Attaching SID/SAPISID to ANDROID_VR
+  // poisons the request — those clients do not support account cookie jars.
+  if (spec.attachCookies) {
+    const cookie = getYoutubeCookieHeader();
+    if (cookie) headers.Cookie = cookie;
+    if (spec.useSapisidHash && cookie) {
+      const auth = buildSapisidHashAuthorization(getCookieMap(), YOUTUBE_ORIGIN);
+      if (auth) {
+        headers.Authorization = auth;
+        headers['X-Origin'] = YOUTUBE_ORIGIN;
+        headers.Origin = YOUTUBE_ORIGIN;
+        headers.Referer = `${YOUTUBE_ORIGIN}/`;
+      }
     }
+  } else if (spec.embedReferer) {
+    headers.Origin = YOUTUBE_ORIGIN;
+    headers.Referer = spec.embedReferer;
   }
   return headers;
 }
@@ -375,16 +425,18 @@ async function fetchVisitorData() {
   }
 }
 
-function buildInnertubeClients() {
+function buildInnertubeClients(videoId) {
   const cookie = getYoutubeCookieHeader();
   const cookieMap = cookie ? getCookieMap() : new Map();
   const hasSapisid = cookieMap.has('SAPISID') || cookieMap.has('__Secure-3PAPISID');
 
+  // Cookie-authenticated browser clients (SAPISIDHASH required).
   const webClients = [
     {
       name: 'WEB+cookies',
+      attachCookies: true,
       useSapisidHash: true,
-      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
       client: {
         clientName: 'WEB',
         clientVersion: '2.20250313.00.00',
@@ -392,18 +444,31 @@ function buildInnertubeClients() {
     },
     {
       name: 'MWEB+cookies',
+      attachCookies: true,
       useSapisidHash: true,
-      ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+      ua: 'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36',
       client: {
         clientName: 'MWEB',
         clientVersion: '2.20250313.00.00',
       },
     },
+    {
+      name: 'TVHTML5+cookies',
+      attachCookies: true,
+      useSapisidHash: true,
+      ua: 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+      client: {
+        clientName: 'TVHTML5',
+        clientVersion: '7.20250319.10.00',
+      },
+    },
   ];
 
+  // Anonymous / cookie-less clients — never send browser Cookie header.
   const anonClients = [
     {
       name: 'ANDROID_VR',
+      attachCookies: false,
       ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
       client: {
         clientName: 'ANDROID_VR',
@@ -416,6 +481,7 @@ function buildInnertubeClients() {
     },
     {
       name: 'ANDROID_VR_LEGACY',
+      attachCookies: false,
       ua: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
       client: {
         clientName: 'ANDROID_VR',
@@ -427,7 +493,19 @@ function buildInnertubeClients() {
       },
     },
     {
+      name: 'WEB_EMBEDDED',
+      attachCookies: false,
+      embedReferer: `https://www.youtube.com/embed/${videoId || ''}`,
+      ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      client: {
+        clientName: 'WEB_EMBEDDED_PLAYER',
+        clientVersion: '1.20250310.01.00',
+      },
+      thirdParty: { embedUrl: 'https://www.youtube.com/' },
+    },
+    {
       name: 'ANDROID',
+      attachCookies: false,
       ua: 'com.google.android.youtube/19.35.36 (Linux; U; Android 13) gzip',
       key: 'AIzaSyA8eiZmM1FaDVzGye-UOe6p3ig-sVo44u8',
       client: {
@@ -438,6 +516,7 @@ function buildInnertubeClients() {
     },
     {
       name: 'IOS',
+      attachCookies: false,
       ua: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
       key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
       client: {
@@ -454,6 +533,7 @@ function buildInnertubeClients() {
   if (config.youtubeApiKey) {
     anonClients.unshift({
       name: 'ANDROID_VR+GAPI',
+      attachCookies: false,
       ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
       key: config.youtubeApiKey,
       client: {
@@ -467,20 +547,25 @@ function buildInnertubeClients() {
     });
   }
 
-  // Browser cookie jars authenticate WEB/MWEB (+ SAPISIDHASH), not ANDROID_VR.
+  // Try cookie-less VR first (cookies must not ride along), then authenticated WEB.
+  // On Hostinger DC IPs, both may still LOGIN_REQUIRED without a residential proxy.
   if (cookie && hasSapisid) {
-    return [...webClients, ...anonClients];
+    return [...anonClients.filter((c) => c.name.startsWith('ANDROID_VR')), ...webClients, ...anonClients.filter((c) => !c.name.startsWith('ANDROID_VR'))];
   }
   return anonClients;
 }
 
 async function resolveViaInnertube(id, visitorData) {
   const errors = [];
-  for (const spec of buildInnertubeClients()) {
+  const attempts = [];
+  for (const spec of buildInnertubeClients(id)) {
     try {
       const client = { ...spec.client, visitorData: visitorData || undefined };
       const body = {
-        context: { client: { hl: 'en', gl: 'US', ...client } },
+        context: {
+          client: { hl: 'en', gl: 'US', ...client },
+          ...(spec.thirdParty ? { thirdParty: spec.thirdParty } : {}),
+        },
         videoId: id,
         contentCheckOk: true,
         racyCheckOk: true,
@@ -496,7 +581,9 @@ async function resolveViaInnertube(id, visitorData) {
         headers: innertubeHeaders({
           ua: spec.ua,
           visitorData,
+          attachCookies: Boolean(spec.attachCookies),
           useSapisidHash: Boolean(spec.useSapisidHash),
+          embedReferer: spec.embedReferer,
         }),
         body: JSON.stringify(body),
       });
@@ -507,6 +594,7 @@ async function resolveViaInnertube(id, visitorData) {
         const err = new Error(`YouTube playability ${status}: ${reason}`);
         err.errorKind = classifyUpstreamError(reason, status);
         err.loginRequiredHint = err.errorKind === 'login_required' || err.errorKind === 'bot_check';
+        err.client = spec.name;
         throw err;
       }
 
@@ -541,8 +629,13 @@ async function resolveViaInnertube(id, visitorData) {
         }));
 
       const chosen = pickBestStream(formats) || pickBestStream(videoOnly);
-      if (!chosen?.url) throw new Error(`Innertube ${spec.name} returned no playable URL`);
+      if (!chosen?.url) {
+        const err = new Error(`Innertube ${spec.name} returned no playable URL`);
+        err.client = spec.name;
+        throw err;
+      }
 
+      attempts.push({ client: spec.name, ok: true, attachCookies: Boolean(spec.attachCookies) });
       return {
         videoId: id,
         title: json?.videoDetails?.title || id,
@@ -557,8 +650,16 @@ async function resolveViaInnertube(id, visitorData) {
         provider: `innertube:${spec.name}`,
         loginRequiredHint: false,
         errorKind: null,
+        attempts,
       };
     } catch (err) {
+      attempts.push({
+        client: spec.name || err.client || 'unknown',
+        ok: false,
+        attachCookies: Boolean(spec.attachCookies),
+        errorKind: err.errorKind || classifyUpstreamError(err.message),
+        detail: String(err.message || '').slice(0, 120),
+      });
       errors.push(err);
     }
   }
@@ -567,6 +668,7 @@ async function resolveViaInnertube(id, visitorData) {
     errors.find((e) => e.errorKind === 'login_required') ||
     errors[errors.length - 1] ||
     new Error('Innertube resolve failed');
+  preferred.attempts = attempts;
   throw preferred;
 }
 
@@ -753,11 +855,15 @@ async function validateStreamUrl(url) {
 async function resolveStreams(videoId) {
   const id = extractVideoId(videoId) || videoId;
   if (!id) throw new Error('Invalid video id');
-  const key = `yt:streams:${config.youtubeApiKey ? 'gapi' : 'anon'}:${id}`;
+  const cookieFp = getCookieFingerprint();
+  const proxyFlag = config.youtubeFetchProxy ? 'proxy' : 'direct';
+  const key = `yt:streams:${config.youtubeApiKey ? 'gapi' : 'anon'}:${proxyFlag}:${cookieFp}:${id}`;
   const result = await cache.getOrFetch(key, config.ttl.youtube, async () => {
     const errors = [];
+    const clientAttempts = [];
     const visitorData = await fetchVisitorData();
     const meta = await fetchVideoMetaViaDataApi(id);
+    const cookieInfo = cookiesStatus();
 
     // Streams never come from Data API. Prefer Innertube (optionally keyed), then Piped, then Invidious.
     const attempts = [
@@ -769,6 +875,7 @@ async function resolveStreams(videoId) {
     for (const attempt of attempts) {
       try {
         const data = await attempt();
+        if (Array.isArray(data?.attempts)) clientAttempts.push(...data.attempts);
         if (!data?.streamUrl) continue;
         const ok = await validateStreamUrl(data.streamUrl);
         if (!ok) {
@@ -787,6 +894,7 @@ async function resolveStreams(videoId) {
           dataApiConfigured: Boolean(config.youtubeApiKey),
         };
       } catch (err) {
+        if (Array.isArray(err.attempts)) clientAttempts.push(...err.attempts);
         errors.push(err);
       }
     }
@@ -800,15 +908,29 @@ async function resolveStreams(videoId) {
           ? 'transient'
           : 'unavailable';
 
+    const msgCtx = {
+      cookiesComplete: Boolean(cookieInfo.cookieCompleteness?.complete),
+      fetchProxyConfigured: Boolean(config.youtubeFetchProxy),
+      cookieHygieneSuspicious: Boolean(cookieInfo.cookieHygiene?.suspicious),
+    };
     const detail = errors
       .map((e) => e.message)
       .filter(Boolean)
       .slice(0, 3)
       .join(' | ');
-    const e = new Error(`${thaiErrorMessage(kind)}${detail ? ` (${detail})` : ''}`);
+    const e = new Error(`${thaiErrorMessage(kind, msgCtx)}${detail ? ` (${detail})` : ''}`);
     e.errorKind = kind;
     e.loginRequiredHint = kind === 'login_required' || kind === 'bot_check';
     e.meta = meta;
+    e.attempts = clientAttempts.slice(0, 12);
+    e.diagnosis = {
+      cookiesComplete: msgCtx.cookiesComplete,
+      fetchProxyConfigured: msgCtx.fetchProxyConfigured,
+      cookieHygieneSuspicious: msgCtx.cookieHygieneSuspicious,
+      sapisidHashReady: Boolean(cookieInfo.cookieHygiene?.sapisidHashReady),
+      cookieSource: cookieInfo.source,
+      note: cookieInfo.datacenterNote,
+    };
     throw e;
   });
 
@@ -829,12 +951,28 @@ function youtubeIntegrationStatus() {
     cookiesNameCount: cookieInfo.nameCount,
     adminPasteEnabled: cookieInfo.adminPasteEnabled,
     cookieCompleteness: cookieInfo.cookieCompleteness,
+    cookieHygiene: cookieInfo.cookieHygiene
+      ? {
+          envelopeQuoted: cookieInfo.cookieHygiene.envelopeQuoted,
+          valuesHadQuotes: cookieInfo.cookieHygiene.valuesHadQuotes,
+          shortValueNames: cookieInfo.cookieHygiene.shortValueNames,
+          emptyValueNames: cookieInfo.cookieHygiene.emptyValueNames,
+          sapisidValueLengthBand: cookieInfo.cookieHygiene.sapisidValueLengthBand,
+          sessionValueLengthBand: cookieInfo.cookieHygiene.sessionValueLengthBand,
+          headerByteLength: cookieInfo.cookieHygiene.headerByteLength,
+          fingerprint: cookieInfo.cookieHygiene.fingerprint,
+          suspicious: cookieInfo.cookieHygiene.suspicious,
+          sapisidHashReady: cookieInfo.cookieHygiene.sapisidHashReady,
+        }
+      : null,
     requiredCookieNames: cookieInfo.requiredCookieNames,
+    fetchProxyConfigured: Boolean(config.youtubeFetchProxy),
     pipedBases: config.pipedApiBases.length,
     invidiousBases: config.invidiousApiBases.length,
     note:
-      'YOUTUBE_API_KEY = search/metadata. Streams = Innertube (WEB+Cookie+SAPISIDHASH when complete jar) then Piped/Invidious. Thin SID-only jars are rejected. Piped/Invidious ignore server cookies.',
+      'Streams = Innertube (cookie-less ANDROID_VR first, then WEB+Cookie+SAPISIDHASH) → Piped → Invidious. Hostinger DC IPs often stay LOGIN_REQUIRED even with complete cookies; set YOUTUBE_FETCH_PROXY (residential) if needed. Thin SID-only jars rejected. Piped ignores server cookies.',
     crossOriginNote: cookieInfo.crossOriginNote,
+    datacenterNote: cookieInfo.datacenterNote,
   };
 }
 

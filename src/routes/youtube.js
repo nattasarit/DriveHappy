@@ -94,6 +94,9 @@ router.get('/resolve', async (req, res) => {
       error: err.message,
       errorKind,
       loginRequiredHint: Boolean(err.loginRequiredHint),
+      // Diagnostics only — never cookie values
+      attempts: Array.isArray(err.attempts) ? err.attempts.slice(0, 12) : undefined,
+      diagnosis: err.diagnosis || undefined,
     });
   }
 });
