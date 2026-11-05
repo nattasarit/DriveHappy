@@ -1,0 +1,20 @@
+{
+  "name": "drivehappy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "In-car Tesla browser dashboard for DriveHappy (Hostinger Node.js)",
+  "main": "server.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "oauth:tesla": "node scripts/tesla-oauth-bootstrap.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "rss-parser": "^3.13.0"
+  }
+}

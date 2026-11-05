@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="color-scheme" content="dark" />
+  <title>DriveHappy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=Outfit:wght@500;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <main id="dashboard" class="dashboard">
+    <header class="hero">
+      <div class="brand-block">
+        <p class="brand">DriveHappy</p>
+        <p class="tagline">แดชบอร์ดในรถ · อ่านอย่างเดียว</p>
+      </div>
+      <div class="hero-actions">
+        <button type="button" class="btn btn-primary" id="btn-youtube" aria-label="เปิด YouTube">YouTube</button>
+        <button type="button" class="btn btn-ghost" id="btn-refresh" aria-label="รีเฟรช">รีเฟรช</button>
+      </div>
+    </header>
+
+    <section class="status" aria-live="polite">
+      <div class="metric">
+        <p class="metric-value" id="battery-level">--</p>
+        <p class="metric-label">แบตเตอรี่ %</p>
+      </div>
+      <div class="metric">
+        <p class="metric-value" id="battery-range">--</p>
+        <p class="metric-label">ระยะทาง กม.</p>
+      </div>
+      <p class="status-meta" id="vehicle-meta">กำลังโหลดข้อมูลรถ…</p>
+    </section>
+
+    <section class="widgets" aria-label="วิดเจ็ต">
+      <article class="widget" id="widget-weather">
+        <h2>อากาศ</h2>
+        <p class="widget-value" id="weather-temp">--°</p>
+        <p class="widget-sub" id="weather-sub">กำลังหาตำแหน่ง…</p>
+      </article>
+      <article class="widget" id="widget-gold">
+        <h2>ราคาบาท</h2>
+        <p class="widget-value" id="gold-price">--</p>
+        <p class="widget-sub" id="gold-sub">บาททอง</p>
+      </article>
+      <article class="widget" id="widget-btc">
+        <h2>BTC</h2>
+        <p class="widget-value" id="btc-price">--</p>
+        <p class="widget-sub" id="btc-sub">THB</p>
+      </article>
+      <article class="widget widget-news" id="widget-news">
+        <h2>ข่าวไทยรัฐ</h2>
+        <ul id="news-list" class="news-list"></ul>
+      </article>
+    </section>
+  </main>
+
+  <section id="youtube-app" class="youtube-app" hidden>
+    <header class="yt-header">
+      <button type="button" class="btn btn-ghost" id="yt-close">← แดชบอร์ด</button>
+      <p class="yt-title">YouTube</p>
+      <button type="button" class="btn btn-ghost" id="yt-login">เข้าสู่ระบบ</button>
+    </header>
+
+    <div class="yt-search-row">
+      <input id="yt-query" type="search" enterkeyhint="search" placeholder="ค้นหาบน YouTube" autocomplete="off" />
+      <button type="button" class="btn btn-primary" id="yt-search-btn">ค้นหา</button>
+    </div>
+    <div class="yt-url-row">
+      <input id="yt-url" type="url" placeholder="หรือวางลิงก์ YouTube" autocomplete="off" />
+      <button type="button" class="btn btn-ghost" id="yt-open-url">เปิด</button>
+    </div>
+
+    <div id="yt-login-panel" class="yt-login-panel" hidden>
+      <p>เข้าสู่ระบบ Google/YouTube ในเบราว์เซอร์รถอาจถูกบล็อกคุกกี้ / iframe</p>
+      <div class="yt-login-actions">
+        <a class="btn btn-primary" href="https://accounts.google.com/ServiceLogin?service=youtube" target="_blank" rel="noopener">เปิดหน้า Login</a>
+        <a class="btn btn-ghost" href="https://www.youtube.com/" target="_blank" rel="noopener">เปิด YouTube.com</a>
+        <button type="button" class="btn btn-ghost" id="yt-login-dismiss">ปิด</button>
+      </div>
+      <p class="yt-note">หากล็อกอินในรถไม่ได้ ให้ล็อกอินบนโทรศัพท์/คอมพิวเตอร์แล้วใช้ค้นหาแบบไม่ล็อกอินในรถ</p>
+    </div>
+
+    <div id="yt-results" class="yt-results" aria-live="polite"></div>
+
+    <div id="yt-player" class="yt-player" hidden>
+      <canvas id="yt-canvas" width="1280" height="720" aria-label="ตัวเล่น YouTube แบบ canvas"></canvas>
+      <p class="yt-now" id="yt-now-title"></p>
+      <div class="yt-controls">
+        <button type="button" class="btn btn-primary" id="yt-play">เล่น</button>
+        <button type="button" class="btn btn-ghost" id="yt-pause">หยุดชั่วคราว</button>
+        <button type="button" class="btn btn-ghost" id="yt-stop">ปิดคลิป</button>
+      </div>
+      <p class="yt-note" id="yt-player-status"></p>
+    </div>
+  </section>
+
+  <script src="/js/app.js" defer></script>
+  <script src="/js/youtube-app.js" defer></script>
+</body>
+</html>
