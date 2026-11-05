@@ -1,9 +1,18 @@
 'use strict';
 
 const express = require('express');
-const { searchVideos, resolveStreams, extractVideoId } = require('../youtube/service');
+const {
+  searchVideos,
+  resolveStreams,
+  extractVideoId,
+  youtubeIntegrationStatus,
+} = require('../youtube/service');
 
 const router = express.Router();
+
+router.get('/status', (_req, res) => {
+  res.json({ ok: true, data: youtubeIntegrationStatus() });
+});
 
 router.get('/search', async (req, res) => {
   try {

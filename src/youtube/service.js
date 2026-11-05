@@ -97,11 +97,15 @@ async function fetchJson(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
 
 async function searchWithYoutubeDataApi(query) {
   const key = config.youtubeApiKey;
+  if (!key) throw new Error('YOUTUBE_API_KEY not configured');
   const url =
     `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=12` +
     `&q=${encodeURIComponent(query)}&key=${encodeURIComponent(key)}`;
-  const { res, json } = await fetchJson(url);
-  if (!res.ok) throw new Error(`YouTube Data API ${res.status}`);
+  const { res, json, text } = await fetchJson(url);
+  if (!res.ok) {
+    const apiErr = json?.error?.message || text.slice(0, 120);
+    throw new Error(`YouTube Data API ${res.status}: ${apiErr}`);
+  }
   return (json.items || [])
     .map((item) => ({
       videoId: item.id?.videoId,
@@ -110,6 +114,33 @@ async function searchWithYoutubeDataApi(query) {
       thumbnail: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url,
     }))
     .filter((v) => v.videoId);
+}
+
+/** Metadata only — Data API never returns playable stream URLs. */
+async function fetchVideoMetaViaDataApi(id) {
+  const key = config.youtubeApiKey;
+  if (!key) return null;
+  const url =
+    `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status` +
+    `&id=${encodeURIComponent(id)}&key=${encodeURIComponent(key)}`;
+  const { res, json } = await fetchJson(url);
+  if (!res.ok) return null;
+  const item = json?.items?.[0];
+  if (!item) return null;
+  const thumb =
+    item.snippet?.thumbnails?.medium?.url ||
+    item.snippet?.thumbnails?.high?.url ||
+    item.snippet?.thumbnails?.default?.url ||
+    null;
+  return {
+    videoId: id,
+    title: item.snippet?.title || id,
+    channel: item.snippet?.channelTitle || null,
+    thumbnail: thumb,
+    duration: null,
+    embeddable: item.status?.embeddable !== false,
+    privacyStatus: item.status?.privacyStatus || null,
+  };
 }
 
 async function searchWithPiped(query) {
@@ -176,22 +207,44 @@ async function searchWithInvidious(query) {
 async function searchVideos(query) {
   const q = String(query || '').trim();
   if (!q) return { items: [], query: q };
-  const key = `yt:search:${q.toLowerCase()}`;
-  const result = await cache.getOrFetch(key, config.ttl.youtube, async () => {
+  // Bust cache when Data API key appears/disappears so Hostinger env updates take effect.
+  const cacheKey = `yt:search:${config.youtubeApiKey ? 'gapi' : 'anon'}:${q.toLowerCase()}`;
+  const result = await cache.getOrFetch(cacheKey, config.ttl.youtube, async () => {
+    const attempts = [];
     if (config.youtubeApiKey) {
       try {
         const items = await searchWithYoutubeDataApi(q);
-        return { items, provider: 'youtube-data-api' };
-      } catch {
-        // fall through
+        return {
+          items,
+          provider: 'youtube-data-api',
+          dataApiConfigured: true,
+        };
+      } catch (err) {
+        attempts.push(`data-api: ${err.message}`);
       }
     }
     try {
       const items = await searchWithPiped(q);
-      return { items, provider: 'piped' };
-    } catch {
+      return {
+        items,
+        provider: 'piped',
+        dataApiConfigured: Boolean(config.youtubeApiKey),
+        dataApiFallback: attempts[0] || null,
+      };
+    } catch (err) {
+      attempts.push(`piped: ${err.message}`);
+    }
+    try {
       const items = await searchWithInvidious(q);
-      return { items, provider: 'invidious' };
+      return {
+        items,
+        provider: 'invidious',
+        dataApiConfigured: Boolean(config.youtubeApiKey),
+        dataApiFallback: attempts[0] || null,
+      };
+    } catch (err) {
+      attempts.push(`invidious: ${err.message}`);
+      throw new Error(`ค้นหาไม่สำเร็จ: ${attempts.join(' | ')}`);
     }
   });
   return {
@@ -291,59 +344,79 @@ async function fetchVisitorData() {
   }
 }
 
-const INNERTUBE_CLIENTS = [
-  {
-    name: 'ANDROID_VR',
-    ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-    client: {
-      clientName: 'ANDROID_VR',
-      clientVersion: '1.61.48',
-      deviceMake: 'Oculus',
-      deviceModel: 'Quest 3',
-      osName: 'Android',
-      osVersion: '12L',
+function buildInnertubeClients() {
+  const clients = [
+    {
+      name: 'ANDROID_VR',
+      ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      client: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.61.48',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        osName: 'Android',
+        osVersion: '12L',
+      },
     },
-  },
-  {
-    name: 'ANDROID_VR_LEGACY',
-    ua: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
-    client: {
-      clientName: 'ANDROID_VR',
-      clientVersion: '1.57.29',
-      deviceMake: 'Oculus',
-      deviceModel: 'Quest 3',
-      osName: 'Android',
-      osVersion: '12L',
+    {
+      name: 'ANDROID_VR_LEGACY',
+      ua: 'com.google.android.apps.youtube.vr.oculus/1.57.29 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      client: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.57.29',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        osName: 'Android',
+        osVersion: '12L',
+      },
     },
-  },
-  {
-    name: 'ANDROID',
-    ua: 'com.google.android.youtube/19.35.36 (Linux; U; Android 13) gzip',
-    key: 'AIzaSyA8eiZmM1FaDVzGye-UOe6p3ig-sVo44u8',
-    client: {
-      clientName: 'ANDROID',
-      clientVersion: '19.35.36',
-      androidSdkVersion: 33,
+    {
+      name: 'ANDROID',
+      ua: 'com.google.android.youtube/19.35.36 (Linux; U; Android 13) gzip',
+      key: 'AIzaSyA8eiZmM1FaDVzGye-UOe6p3ig-sVo44u8',
+      client: {
+        clientName: 'ANDROID',
+        clientVersion: '19.35.36',
+        androidSdkVersion: 33,
+      },
     },
-  },
-  {
-    name: 'IOS',
-    ua: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
-    key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
-    client: {
-      clientName: 'IOS',
-      clientVersion: '19.45.4',
-      deviceMake: 'Apple',
-      deviceModel: 'iPhone16,2',
-      osName: 'iPhone',
-      osVersion: '17.5.1.21F90',
+    {
+      name: 'IOS',
+      ua: 'com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)',
+      key: 'AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc',
+      client: {
+        clientName: 'IOS',
+        clientVersion: '19.45.4',
+        deviceMake: 'Apple',
+        deviceModel: 'iPhone16,2',
+        osName: 'iPhone',
+        osVersion: '17.5.1.21F90',
+      },
     },
-  },
-];
+  ];
+  // Prefer the Hostinger YOUTUBE_API_KEY on Innertube player attempts when present.
+  // (Data API keys are for googleapis search/metadata; if Google accepts it on youtubei, great — otherwise ignored.)
+  if (config.youtubeApiKey) {
+    clients.unshift({
+      name: 'ANDROID_VR+GAPI',
+      ua: 'com.google.android.apps.youtube.vr.oculus/1.61.48 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
+      key: config.youtubeApiKey,
+      client: {
+        clientName: 'ANDROID_VR',
+        clientVersion: '1.61.48',
+        deviceMake: 'Oculus',
+        deviceModel: 'Quest 3',
+        osName: 'Android',
+        osVersion: '12L',
+      },
+    });
+  }
+  return clients;
+}
 
 async function resolveViaInnertube(id, visitorData) {
   const errors = [];
-  for (const spec of INNERTUBE_CLIENTS) {
+  for (const spec of buildInnertubeClients()) {
     try {
       const client = { ...spec.client, visitorData: visitorData || undefined };
       const body = {
@@ -616,12 +689,13 @@ async function validateStreamUrl(url) {
 async function resolveStreams(videoId) {
   const id = extractVideoId(videoId) || videoId;
   if (!id) throw new Error('Invalid video id');
-  const key = `yt:streams:${id}`;
+  const key = `yt:streams:${config.youtubeApiKey ? 'gapi' : 'anon'}:${id}`;
   const result = await cache.getOrFetch(key, config.ttl.youtube, async () => {
     const errors = [];
     const visitorData = await fetchVisitorData();
+    const meta = await fetchVideoMetaViaDataApi(id);
 
-    // Prefer Innertube first — Piped often mirrors the same bot wall with less detail.
+    // Streams never come from Data API. Prefer Innertube (optionally keyed), then Piped, then Invidious.
     const attempts = [
       () => resolveViaInnertube(id, visitorData),
       () => resolveViaPiped(id),
@@ -641,7 +715,13 @@ async function resolveStreams(videoId) {
           );
           continue;
         }
-        return data;
+        return {
+          ...data,
+          title: data.title || meta?.title || id,
+          channel: data.channel || meta?.channel || null,
+          thumbnail: data.thumbnail || meta?.thumbnail || null,
+          dataApiConfigured: Boolean(config.youtubeApiKey),
+        };
       } catch (err) {
         errors.push(err);
       }
@@ -664,6 +744,7 @@ async function resolveStreams(videoId) {
     const e = new Error(`${thaiErrorMessage(kind)}${detail ? ` (${detail})` : ''}`);
     e.errorKind = kind;
     e.loginRequiredHint = kind === 'login_required' || kind === 'bot_check';
+    e.meta = meta;
     throw e;
   });
 
@@ -674,10 +755,22 @@ async function resolveStreams(videoId) {
   };
 }
 
+function youtubeIntegrationStatus() {
+  return {
+    dataApiConfigured: Boolean(config.youtubeApiKey),
+    cookiesConfigured: Boolean(config.youtubeCookies),
+    pipedBases: config.pipedApiBases.length,
+    invidiousBases: config.invidiousApiBases.length,
+    note:
+      'YOUTUBE_API_KEY improves search/metadata only; playable streams use Innertube/Piped/Invidious (optional YOUTUBE_COOKIES for bot-checks).',
+  };
+}
+
 module.exports = {
   extractVideoId,
   searchVideos,
   resolveStreams,
   classifyUpstreamError,
   thaiErrorMessage,
+  youtubeIntegrationStatus,
 };
